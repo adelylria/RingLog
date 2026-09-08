@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Properties>
+        <Property name="logsDir">${sys:ringlog.logs.dir:-${sys:java.io.tmpdir}/RingLog/logs}</Property>
+    </Properties>
+    <Appenders>
+        <RollingFile name="RingLogFile"
+                     fileName="${logsDir}/ringlog.log"
+                     filePattern="${logsDir}/ringlog-%i.log">
+            <PatternLayout pattern="%d{ISO8601} %-5level [%t] %logger{1} - %msg%n"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="5 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy min="1" max="5" fileIndex="min"/>
+        </RollingFile>
+    </Appenders>
+    <Loggers>
+        <Root level="INFO">
+            <AppenderRef ref="RingLogFile"/>
+        </Root>
+    </Loggers>
+</Configuration>
