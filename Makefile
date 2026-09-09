@@ -2,6 +2,7 @@
 
 POWERSHELL ?= powershell.exe
 MAVEN ?= mvn.cmd
+UPDATE_BASE_URL ?= https://github.com/adelylria/RingLog/releases/latest/download
 
 JAVA_HOME_DIR := $(CURDIR)/.deps/jdk17/zulu17.42.19-ca-jdk17.0.7-win_x64
 ISCC := $(CURDIR)/.deps/inno-6.7.3/ISCC.exe
@@ -28,7 +29,7 @@ test:
 	@$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='Stop'; $$env:JAVA_HOME='$(JAVA_HOME_DIR)'; $$env:Path='$(JAVA_HOME_DIR)/bin;' + $$env:Path; & '$(MAVEN)' clean test; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }"
 
 package:
-	@$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='Stop'; $$env:JAVA_HOME='$(JAVA_HOME_DIR)'; $$env:Path='$(JAVA_HOME_DIR)/bin;' + $$env:Path; & '$(MAVEN)' clean package; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }"
+	@$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='Stop'; $$env:JAVA_HOME='$(JAVA_HOME_DIR)'; $$env:Path='$(JAVA_HOME_DIR)/bin;' + $$env:Path; & '$(MAVEN)' '-Dringlog.update.baseUrl=$(UPDATE_BASE_URL)' clean package; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }"
 
 verify: package
 	@$(POWERSHELL) -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='Stop'; $$env:JAVA_HOME='$(JAVA_HOME_DIR)'; $$env:Path='$(JAVA_HOME_DIR)/bin;' + $$env:Path; & '$(JAVA_HOME_DIR)/bin/java.exe' scripts/VerifyDistribution.java; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }; & '$(JAVA_HOME_DIR)/bin/java.exe' scripts/VerifyDistribution.java --startup-only; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }"

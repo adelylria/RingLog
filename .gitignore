@@ -21,6 +21,7 @@
 /.codegraph/
 /.deps/
 /.superpowers/
+/docs/superpowers/
 /vendor-runtimes/
 /.release-secrets/
 

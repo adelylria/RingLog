@@ -130,8 +130,16 @@ public final class DistributionConfigurationTest {
         require(Files.isRegularFile(root.resolve("docs/windows-distribution.md")),
                 "Manual release procedure is missing");
         String ignore = Files.readString(root.resolve(".gitignore"));
-        require(ignore.contains("/.release-secrets/") && ignore.contains("*.pk8"),
+        require(ignore.contains("/.release-secrets/")
+                        && ignore.contains("*.pk8")
+                        && ignore.contains("/docs/superpowers/"),
                 "Private update keys must be excluded from Git");
+        String makefile = Files.readString(root.resolve("Makefile"));
+        require(makefile.contains(
+                        "UPDATE_BASE_URL ?= https://github.com/adelylria/RingLog/"
+                                + "releases/latest/download"
+                ) && makefile.contains("-Dringlog.update.baseUrl=$(UPDATE_BASE_URL)"),
+                "Installer builds must embed the stable public update channel");
         try (var source = Files.walk(root.resolve("src"))) {
             require(source.noneMatch(path -> path.getFileName().toString().endsWith(".pk8")),
                     "A private update key exists under src");

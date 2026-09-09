@@ -66,7 +66,7 @@ La release pública debe tener exactamente el mismo SemVer que `pom.xml` y el ta
 
    ```powershell
    java scripts/CreateUpdateManifest.java `
-     --repository OWNER/REPOSITORY `
+     --repository adelylria/RingLog `
      --installer x64=target/windows-installer/output/x64/RingLog-Setup-x64.exe `
      --output target/release/update-manifest.json
    ```
@@ -93,13 +93,13 @@ La release pública debe tener exactamente el mismo SemVer que `pom.xml` y el ta
 
 Una release pública expone automáticamente las URLs estables:
 
-- `https://github.com/OWNER/REPOSITORY/releases/latest/download/update-manifest.json`
-- `https://github.com/OWNER/REPOSITORY/releases/latest/download/update-manifest.json.sig`
+- `https://github.com/adelylria/RingLog/releases/latest/download/update-manifest.json`
+- `https://github.com/adelylria/RingLog/releases/latest/download/update-manifest.json.sig`
 
 El build público debe filtrar esa base con:
 
 ```powershell
-mvn -Dringlog.update.baseUrl=https://github.com/OWNER/REPOSITORY/releases/latest/download clean package
+mvn -Dringlog.update.baseUrl=https://github.com/adelylria/RingLog/releases/latest/download clean package
 ```
 
 En desarrollo, si la base no se define, las actualizaciones permanecen desactivadas.
