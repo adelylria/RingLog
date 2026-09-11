@@ -29,8 +29,8 @@ public final class ApplicationStorageBootstrapTest {
                     "A fresh install must become ready without a migration screen");
             require(result.database().equals(paths.databasePath()),
                     "A fresh install must use AppPaths.databasePath");
-            require(Files.isRegularFile(paths.databasePath()) && userVersion(paths.databasePath()) == 4,
-                    "A fresh install must create schema v4 directly in AppData");
+            require(Files.isRegularFile(paths.databasePath()) && userVersion(paths.databasePath()) == 5,
+                    "A fresh install must create schema v5 directly in AppData");
             require(!Files.exists(working.resolve("ringlog.db")),
                     "Fresh startup must not recreate ringlog.db in user.dir");
         } finally {

@@ -128,8 +128,9 @@ public final class RingLogExporter {
                         ORDER BY b.stable_key
                         """));
                 sheets.put("places", rows(connection, "places", """
-                        SELECT stable_key, name, locality, latitude, longitude, notes,
-                               is_favorite, is_default, active, created_at, updated_at
+                        SELECT stable_key, name, locality, autonomous_community, country,
+                               latitude, longitude, notes, is_favorite, is_default, active,
+                               created_at, updated_at
                         FROM place ORDER BY stable_key
                         """));
                 sheets.put("events", rows(connection, "events", """

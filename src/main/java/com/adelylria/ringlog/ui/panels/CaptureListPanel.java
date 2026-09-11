@@ -75,6 +75,7 @@ public class CaptureListPanel extends JPanel {
     private final JComboBox<Object> typeCombo;
     private final JComboBox<String> dateModeCombo;
     private final JComboBox<DateFilterOption> datePeriodCombo;
+    private final JComboBox<DateSortOrder> dateSortOrderCombo;
     private final CalendarDatePicker dayPicker;
     private final TimelineView timelineView;
     private final JLabel statusLabel;
@@ -135,6 +136,11 @@ public class CaptureListPanel extends JPanel {
         this.datePeriodCombo.setName("dateFilterPeriod");
         this.datePeriodCombo.getAccessibleContext().setAccessibleName(
                 "Periodo del filtro de fecha"
+        );
+        this.dateSortOrderCombo = new JComboBox<>(DateSortOrder.values());
+        this.dateSortOrderCombo.setName("dateSortOrder");
+        this.dateSortOrderCombo.getAccessibleContext().setAccessibleName(
+                "Orden de los registros por fecha"
         );
         this.dayPicker = new CalendarDatePicker(null);
         this.typeCombo.addItem("Todos los tipos");
@@ -229,6 +235,7 @@ public class CaptureListPanel extends JPanel {
         typeCombo.addActionListener(event -> filterChanged());
         dateModeCombo.addActionListener(event -> dateModeChanged());
         datePeriodCombo.addActionListener(event -> filterChanged());
+        dateSortOrderCombo.addActionListener(event -> filterChanged());
         dayPicker.addPropertyChangeListener(
                 CalendarDatePicker.SELECTED_DATE_PROPERTY,
                 event -> filterChanged()
@@ -264,9 +271,12 @@ public class CaptureListPanel extends JPanel {
         typeCombo.setPreferredSize(new java.awt.Dimension(170, 38));
         speciesCombo.setPreferredSize(new java.awt.Dimension(210, 38));
         placeCombo.setPreferredSize(new java.awt.Dimension(210, 38));
+        dateSortOrderCombo.setPreferredSize(new java.awt.Dimension(190, 38));
         controls.add(typeCombo);
         controls.add(speciesCombo);
         controls.add(placeCombo);
+        controls.add(UiKit.muted("Orden"));
+        controls.add(dateSortOrderCombo);
 
         JPanel dateControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         dateControls.setOpaque(false);
@@ -362,6 +372,9 @@ public class CaptureListPanel extends JPanel {
                 descriptions.add("Fecha (" + dateMode.toLowerCase(Locale.ROOT)
                         + "): " + period.label());
             }
+        }
+        if (dateSortOrderCombo.getSelectedItem() == DateSortOrder.OLDEST_FIRST) {
+            descriptions.add("Orden: más antiguos primero");
         }
         return List.copyOf(descriptions);
     }
@@ -613,6 +626,7 @@ public class CaptureListPanel extends JPanel {
                 placeCombo.setSelectedIndex(0);
             }
             dateModeCombo.setSelectedIndex(0);
+            dateSortOrderCombo.setSelectedItem(DateSortOrder.NEWEST_FIRST);
             dayPicker.setSelectedDate(null);
             updateDatePeriodOptions();
         } finally {
@@ -701,7 +715,18 @@ public class CaptureListPanel extends JPanel {
                         datePeriod
                 ))
                 .filter(item -> query.isBlank() || contains(item, query))
+                .sorted(dateComparator())
                 .toList();
+    }
+
+    private Comparator<BirdEventTimelineItem> dateComparator() {
+        DateSortOrder selected = (DateSortOrder) dateSortOrderCombo.getSelectedItem();
+        Comparator<String> direction = selected == DateSortOrder.OLDEST_FIRST
+                ? Comparator.naturalOrder()
+                : Comparator.reverseOrder();
+        Comparator<String> values = Comparator.nullsLast(direction);
+        return Comparator.comparing(BirdEventTimelineItem::eventDate, values)
+                .thenComparing(BirdEventTimelineItem::eventTime, values);
     }
 
     private boolean contains(BirdEventTimelineItem item, String query) {
@@ -797,6 +822,22 @@ public class CaptureListPanel extends JPanel {
     }
 
     private record DateFilterOption(String key, String label) {
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private enum DateSortOrder {
+        NEWEST_FIRST("Más recientes primero"),
+        OLDEST_FIRST("Más antiguos primero");
+
+        private final String label;
+
+        DateSortOrder(String label) {
+            this.label = label;
+        }
 
         @Override
         public String toString() {

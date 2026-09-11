@@ -9,13 +9,18 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import javax.swing.JComboBox;
+import javax.swing.JButton;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
 import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.model.view.SpeciesOption;
+import com.adelylria.ringlog.model.view.SpeciesSummary;
 import com.adelylria.ringlog.repository.BirdEventRepository;
 import com.adelylria.ringlog.repository.CatalogRepository;
 import com.adelylria.ringlog.ui.panels.CapturePanel;
+import com.adelylria.ringlog.ui.panels.PlacePanel;
+import com.adelylria.ringlog.ui.panels.SpeciesPanel;
 
 public final class CatalogRefreshTest {
 
@@ -79,6 +84,165 @@ public final class CatalogRefreshTest {
                 "La recarga no debe duplicar especies existentes");
         require(countOption(panel, originalPlace) == 1,
                 "La recarga no debe duplicar lugares existentes");
+    }
+
+    public static void placeCatalogOffersEditingOnlyWhenDataCanBeChanged()
+            throws Exception {
+        PlaceSummary place = new PlaceSummary(
+                9L, "ELS RAFALS", "POLLENÇA", "Illes Balears", "España",
+                39.85, 2.98, null, false, false, 4L
+        );
+        CatalogRepository repository = new CatalogRepository("unused.db") {
+            @Override
+            public List<PlaceSummary> findPlaceSummaries() {
+                return List.of(place);
+            }
+        };
+
+        PlacePanel editable = onEdt(() -> new PlacePanel(repository, true));
+        SwingUtilities.invokeAndWait(editable::refresh);
+        JButton edit = waitForButton(editable, "editPlace-9");
+        require(edit.isEnabled(), "A normal place catalog must offer an edit action");
+        require(edit.getText() == null || edit.getText().isBlank(),
+                "Place cards should use a discreet icon instead of a large edit pill");
+        SwingUtilities.invokeAndWait(edit::doClick);
+        waitForVisibleComponent(editable, "placeEditorView");
+        JTextField placeName = (JTextField) find(editable, "placeName");
+        require(placeName != null && "ELS RAFALS".equals(placeName.getText()),
+                "Place editing must open inline and preload the selected place");
+        JButton cancel = waitForButton(editable, "cancelPlaceEditorButton");
+        SwingUtilities.invokeAndWait(cancel::doClick);
+        waitForHiddenComponent(editable, "placeEditorView");
+        SwingUtilities.invokeAndWait(() -> editable.setMutationActionsEnabled(false));
+        require(!edit.isEnabled(), "Place editing must follow the global mutation lock");
+
+        PlacePanel readOnly = onEdt(() -> new PlacePanel(repository, false));
+        SwingUtilities.invokeAndWait(readOnly::refresh);
+        waitForText(readOnly, "ELS RAFALS");
+        require(find(readOnly, "editPlace-9") == null,
+                "A portable read-only catalog must not expose place editing");
+    }
+
+    public static void speciesCatalogEditsInlineOnlyWhenDataCanBeChanged()
+            throws Exception {
+        SpeciesSummary species = new SpeciesSummary(
+                12L,
+                "Zorzal común",
+                "TUR-PHI",
+                "Turdus philomelos",
+                "Zorzal común",
+                18L
+        );
+        CatalogRepository repository = new CatalogRepository("unused.db") {
+            @Override
+            public List<SpeciesSummary> findSpeciesSummaries() {
+                return List.of(species);
+            }
+        };
+
+        SpeciesPanel editable = onEdt(() -> new SpeciesPanel(repository, true));
+        SwingUtilities.invokeAndWait(editable::refresh);
+        JButton edit = waitForButton(editable, "editSpecies-12");
+        require(edit.getText() == null || edit.getText().isBlank(),
+                "Species cards should use a discreet icon instead of a large edit pill");
+        SwingUtilities.invokeAndWait(edit::doClick);
+        waitForVisibleComponent(editable, "speciesEditorView");
+        JTextField scientificName = (JTextField) find(
+                editable, "speciesScientificName"
+        );
+        require(scientificName != null
+                        && "Turdus philomelos".equals(scientificName.getText()),
+                "Species editing must open inline and preload the selected species");
+        JButton cancel = waitForButton(editable, "cancelSpeciesEditorButton");
+        SwingUtilities.invokeAndWait(cancel::doClick);
+        waitForHiddenComponent(editable, "speciesEditorView");
+
+        SpeciesPanel readOnly = onEdt(() -> new SpeciesPanel(repository, false));
+        SwingUtilities.invokeAndWait(readOnly::refresh);
+        waitForText(readOnly, "Zorzal común");
+        require(find(readOnly, "editSpecies-12") == null,
+                "A portable read-only catalog must not expose species editing");
+    }
+
+    private static void waitForVisibleComponent(Component root, String name)
+            throws Exception {
+        waitForComponentVisibility(root, name, true);
+    }
+
+    private static void waitForHiddenComponent(Component root, String name)
+            throws Exception {
+        waitForComponentVisibility(root, name, false);
+    }
+
+    private static void waitForComponentVisibility(
+            Component root,
+            String name,
+            boolean visible
+    ) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        do {
+            Component found = onEdt(() -> find(root, name));
+            if (found != null && found.isVisible() == visible) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError(
+                "El componente " + name + " no cambió su visibilidad a " + visible
+        );
+    }
+
+    private static void waitForText(Component root, String text) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        do {
+            if (onEdt(() -> containsText(root, text))) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("No apareció el texto " + text);
+    }
+
+    private static boolean containsText(Component component, String text) {
+        if (component instanceof javax.swing.JLabel label && text.equals(label.getText())) {
+            return true;
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                if (containsText(child, text)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static JButton waitForButton(Component root, String name) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        do {
+            Component found = onEdt(() -> find(root, name));
+            if (found instanceof JButton button) {
+                return button;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("No apareció el botón " + name);
+    }
+
+    private static Component find(Component component, String name) {
+        if (component instanceof javax.swing.JComponent swing
+                && name.equals(swing.getName())) {
+            return component;
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                Component found = find(child, name);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private static PlaceSummary place(long id, String name) {
@@ -152,6 +316,8 @@ public final class CatalogRefreshTest {
 
     public static void main(String[] args) throws Exception {
         refreshingCatalogsAddsOptionsWithoutDuplicates();
+        placeCatalogOffersEditingOnlyWhenDataCanBeChanged();
+        speciesCatalogEditsInlineOnlyWhenDataCanBeChanged();
         System.out.println("CatalogRefreshTest: PASS");
     }
 }

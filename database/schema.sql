@@ -27,6 +27,8 @@ CREATE TABLE place (
     stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
     name TEXT NOT NULL COLLATE NOCASE,
     locality TEXT,
+    autonomous_community TEXT,
+    country TEXT,
     latitude REAL CHECK (latitude IS NULL OR latitude BETWEEN -90 AND 90),
     longitude REAL CHECK (longitude IS NULL OR longitude BETWEEN -180 AND 180),
     notes TEXT,
@@ -283,4 +285,4 @@ BEGIN
     UPDATE bird_event SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;

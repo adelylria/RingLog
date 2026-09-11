@@ -22,9 +22,11 @@ import javax.swing.JScrollPane;
 import javax.swing.SwingWorker;
 
 import com.adelylria.ringlog.model.view.BirdEventDetail;
+import com.adelylria.ringlog.model.BirdStatusCatalog;
 import com.adelylria.ringlog.repository.BirdEventRepository;
 import com.adelylria.ringlog.ui.components.DetailSection;
 import com.adelylria.ringlog.ui.components.EmptyStatePanel;
+import com.adelylria.ringlog.ui.components.LocationMapPanel;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
@@ -34,13 +36,14 @@ public class CaptureDetailPanel extends JPanel {
     private final Runnable onBack;
     private final Consumer<BirdEventDetail> onEdit;
     private final boolean canEdit;
+    private final Path mapCacheDirectory;
     private final JPanel content;
 
     public CaptureDetailPanel(
             BirdEventRepository eventRepository,
             Runnable onBack
     ) {
-        this(eventRepository, onBack, ignored -> { }, true);
+        this(eventRepository, onBack, ignored -> { }, true, defaultMapCache());
     }
 
     public CaptureDetailPanel(
@@ -48,7 +51,7 @@ public class CaptureDetailPanel extends JPanel {
             Runnable onBack,
             Consumer<BirdEventDetail> onEdit
     ) {
-        this(eventRepository, onBack, onEdit, true);
+        this(eventRepository, onBack, onEdit, true, defaultMapCache());
     }
 
     public CaptureDetailPanel(
@@ -57,10 +60,21 @@ public class CaptureDetailPanel extends JPanel {
             Consumer<BirdEventDetail> onEdit,
             boolean canEdit
     ) {
+        this(eventRepository, onBack, onEdit, canEdit, defaultMapCache());
+    }
+
+    public CaptureDetailPanel(
+            BirdEventRepository eventRepository,
+            Runnable onBack,
+            Consumer<BirdEventDetail> onEdit,
+            boolean canEdit,
+            Path mapCacheDirectory
+    ) {
         this.eventRepository = eventRepository;
         this.onBack = onBack;
         this.onEdit = onEdit;
         this.canEdit = canEdit;
+        this.mapCacheDirectory = mapCacheDirectory.toAbsolutePath().normalize();
         this.content = UiKit.verticalScrollPanel();
         initialize();
     }
@@ -139,7 +153,7 @@ public class CaptureDetailPanel extends JPanel {
         identityCopy.add(ring);
         String eventSummary = detail.eventType().toString();
         if (hasText(detail.status())) {
-            eventSummary += " · " + UiKit.friendlyCode(detail.status());
+            eventSummary += " · " + displayBirdStatus(detail.status());
         }
         identityCopy.add(UiKit.muted(eventSummary));
         identity.add(identityCopy, BorderLayout.CENTER);
@@ -180,8 +194,11 @@ public class CaptureDetailPanel extends JPanel {
         bird.addRow("Especie", detail.species());
         bird.addRow("Sexo", UiKit.friendlyCode(detail.sexCode()));
         bird.addRow("Código de edad EURING", detail.ageEuringCode());
-        bird.addRow("Estado", UiKit.friendlyCode(detail.status()));
-        bird.addRow("Condición", UiKit.friendlyCode(detail.birdCondition()));
+        bird.addRow("Código de estado", statusCode(detail.status()));
+        bird.addRow("Categoría de estado", statusCategory(detail.status()));
+        bird.addWrappingRow("Estado del ave", statusDescription(detail.status()))
+                .setName("birdStatusDescription");
+        bird.addRow("Condición general", UiKit.friendlyCode(detail.birdCondition()));
         bird.addRow(
                 "Reproducción",
                 UiKit.friendlyCode(detail.reproductiveStatus())
@@ -202,7 +219,7 @@ public class CaptureDetailPanel extends JPanel {
         DetailSection measurements = new DetailSection("Medidas");
         measurements.addRow("Ala", withUnit(detail.wing(), "mm"));
         measurements.addRow("P3", withUnit(detail.p3(), "mm"));
-        measurements.addRow("Torso", withUnit(detail.torso(), "mm"));
+        measurements.addRow("Tarso", withUnit(detail.torso(), "mm"));
         measurements.addRow("Peso", withUnit(detail.weight(), "g"));
         measurements.addRow("Grasa", detail.fatScore());
         measurements.addRow("Músculo", detail.muscleScore());
@@ -226,10 +243,17 @@ public class CaptureDetailPanel extends JPanel {
                 "Coordenadas",
                 coordinates(detail.latitude(), detail.longitude())
         );
+        if (LocationMapPanel.validCoordinates(detail.latitude(), detail.longitude())) {
+            weather.addAside(new LocationMapPanel(
+                    detail.latitude(),
+                    detail.longitude(),
+                    mapCacheDirectory
+            ));
+        }
         addSection(weather);
 
         DetailSection notes = new DetailSection("Notas de campo");
-        notes.addRow("Observaciones", detail.observations());
+        notes.addTextBlock(detail.observations()).setName("fieldNotesText");
         addSection(notes);
 
         DetailSection archive = new DetailSection("Archivo y revisión");
@@ -342,7 +366,35 @@ public class CaptureDetailPanel extends JPanel {
         return String.format(Locale.ROOT, "%.4f, %.4f", latitude, longitude);
     }
 
+    private static String displayBirdStatus(String value) {
+        return BirdStatusCatalog.find(value)
+                .map(BirdStatusCatalog.Entry::displayLabel)
+                .orElseGet(() -> UiKit.friendlyCode(value));
+    }
+
+    private static String statusCode(String value) {
+        return BirdStatusCatalog.find(value)
+                .map(BirdStatusCatalog.Entry::code)
+                .orElseGet(() -> UiKit.display(value));
+    }
+
+    private static String statusCategory(String value) {
+        return BirdStatusCatalog.find(value)
+                .map(BirdStatusCatalog.Entry::category)
+                .orElse("—");
+    }
+
+    private static String statusDescription(String value) {
+        return BirdStatusCatalog.find(value)
+                .map(BirdStatusCatalog.Entry::description)
+                .orElseGet(() -> UiKit.friendlyCode(value));
+    }
+
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static Path defaultMapCache() {
+        return Path.of(System.getProperty("java.io.tmpdir"), "ringlog-map-cache");
     }
 }

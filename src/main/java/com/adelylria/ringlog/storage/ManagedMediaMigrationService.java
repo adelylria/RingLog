@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.adelylria.ringlog.database.Database;
+import com.adelylria.ringlog.database.DatabaseIntegrityValidator;
 import com.adelylria.ringlog.database.DatabaseUpgradeService;
 
 /** Shared staged engine that converts legacy physical media paths into managed references. */
@@ -191,8 +192,7 @@ public final class ManagedMediaMigrationService {
 
             markSchemaV4(stagedDatabase);
             notify(listener, MigrationStage.SCHEMA_V4_MARKED, operation, stagedDatabase);
-            Database.validate(stagedDatabase.toString());
-            requireReady(stagedDatabase, stagedPaths);
+            requireManagedSchemaV4(stagedDatabase, stagedPaths);
             requireSameCounts(sourceCounts, tableCounts(stagedDatabase));
 
             publishMedia(preparation.media(), stagedPaths, destination, publishedFiles);
@@ -567,13 +567,12 @@ public final class ManagedMediaMigrationService {
         }
     }
 
-    private static void requireReady(Path database, AppPaths paths) throws SQLException {
-        DatabaseUpgradeService.Inspection inspection = new DatabaseUpgradeService().inspect(
-                database, new MediaPathResolver(paths)
-        );
-        if (inspection.state() != DatabaseUpgradeService.SchemaState.READY) {
-            throw new SQLException("El staging no ha alcanzado schema v4 gestionado.");
+    private static void requireManagedSchemaV4(Path database, AppPaths paths)
+            throws SQLException, IOException {
+        try (Connection connection = Database.getReadOnlyConnection(database.toString())) {
+            new DatabaseIntegrityValidator().requireValid(connection, 4);
         }
+        validatePublishedMedia(database, paths);
     }
 
     private static void validateIntegrity(Path database) throws SQLException {

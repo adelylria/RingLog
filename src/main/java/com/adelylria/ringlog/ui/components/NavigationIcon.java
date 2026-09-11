@@ -23,6 +23,7 @@ public final class NavigationIcon implements Icon {
         PLACES,
         REPORTS,
         REVIEWS,
+        EDIT,
         SETTINGS
     }
 
@@ -69,6 +70,7 @@ public final class NavigationIcon implements Icon {
                 case PLACES -> paintPlace(g2);
                 case REPORTS -> paintReports(g2);
                 case REVIEWS -> paintReviews(g2);
+                case EDIT -> paintEdit(g2);
                 case SETTINGS -> paintSettings(g2);
             }
         } finally {
@@ -138,6 +140,19 @@ public final class NavigationIcon implements Icon {
         g2.draw(bubble);
         g2.draw(new Line2D.Double(9, 5.5, 9, 9));
         g2.draw(new Ellipse2D.Double(8.5, 10.5, 1, 1));
+    }
+
+    private static void paintEdit(Graphics2D g2) {
+        Path2D pencil = new Path2D.Double();
+        pencil.moveTo(3, 14.5);
+        pencil.lineTo(4.2, 10.5);
+        pencil.lineTo(12.3, 2.4);
+        pencil.lineTo(15.6, 5.7);
+        pencil.lineTo(7.5, 13.8);
+        pencil.closePath();
+        g2.draw(pencil);
+        g2.draw(new Line2D.Double(10.7, 4, 14, 7.3));
+        g2.draw(new Line2D.Double(3, 15.5, 7.4, 13.8));
     }
 
     private static void paintSettings(Graphics2D g2) {

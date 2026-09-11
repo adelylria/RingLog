@@ -9,6 +9,7 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 
 import com.adelylria.ringlog.model.input.SpeciesInput;
+import com.adelylria.ringlog.model.view.SpeciesSummary;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
 public class SpeciesForm extends JPanel {
@@ -36,6 +37,16 @@ public class SpeciesForm extends JPanel {
         addField(0, "Nombre científico *", scientificNameField);
         addField(1, "Nombre común", commonNameField);
         addField(2, "Código", codeField);
+    }
+
+    public SpeciesForm(SpeciesSummary species) {
+        this();
+        if (species == null) {
+            throw new IllegalArgumentException("Falta la especie que quieres editar.");
+        }
+        scientificNameField.setText(text(species.scientificName()));
+        commonNameField.setText(text(species.commonName()));
+        codeField.setText(text(species.code()));
     }
 
     public SpeciesInput input() {
@@ -75,5 +86,9 @@ public class SpeciesForm extends JPanel {
         field.setName(name);
         field.getAccessibleContext().setAccessibleName(accessibleName);
         field.putClientProperty("JTextField.placeholderText", placeholder);
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value;
     }
 }

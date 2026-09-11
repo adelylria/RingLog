@@ -78,6 +78,9 @@ public final class SchemaMigrationRegistryTest {
         require(new V3ToV4StorageMigration().executionType()
                         == SchemaMigrationExecutionType.STAGED_STORAGE,
                 "The real v3 -> v4 migration must be staged storage");
+        require(new V4ToV5PlaceRegionMigration().executionType()
+                        == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
+                "The real v4 -> v5 migration must be SQL transactional");
     }
 
     private static void requireFailure(ThrowingRunnable action, String message) {

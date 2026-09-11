@@ -72,7 +72,7 @@ public final class RecordReportServiceTest {
                                 "Estado vital", "Condición", "Reproducción", "Muda",
                                 "Extensión de muda", "Vuelta", "Anillador",
                                 "Clasificación histórica", "Ala (mm)", "P3 (mm)",
-                                "Torso (mm)", "Peso (g)", "Grasa", "Músculo",
+                                "Tarso (mm)", "Peso (g)", "Grasa", "Músculo",
                                 "Nubes", "Lluvia", "Sensación térmica (°C)",
                                 "Viento", "Observaciones", "N.º de fotos",
                                 "Archivo de origen", "Referencia de origen"

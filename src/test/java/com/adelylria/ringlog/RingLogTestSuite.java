@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 import com.adelylria.ringlog.model.BirdEventFormattingTest;
+import com.adelylria.ringlog.model.BirdStatusCatalogTest;
 import com.adelylria.ringlog.portable.PortableCopyServiceTest;
 import com.adelylria.ringlog.portable.PortableReadOnlyTest;
 import com.adelylria.ringlog.importer.LegacyImportServiceTest;
@@ -35,6 +36,7 @@ import com.adelylria.ringlog.importexport.ConflictResolutionServiceTest;
 import com.adelylria.ringlog.importexport.RingLogV3CompatibilityTest;
 import com.adelylria.ringlog.importexport.NativeExportRoundTripTest;
 import com.adelylria.ringlog.repository.BirdEventRepositoryTest;
+import com.adelylria.ringlog.repository.CatalogRepositoryTest;
 import com.adelylria.ringlog.report.RecordReportServiceTest;
 import com.adelylria.ringlog.storage.AppPathsTest;
 import com.adelylria.ringlog.storage.ApplicationStorageBootstrapTest;
@@ -54,6 +56,7 @@ import com.adelylria.ringlog.ui.SettingsPanelTest;
 import com.adelylria.ringlog.ui.StartupErrorUiTest;
 import com.adelylria.ringlog.ui.ThemeManagerTest;
 import com.adelylria.ringlog.ui.UpdateOverlayTest;
+import com.adelylria.ringlog.ui.components.OpenStreetMapTileStoreTest;
 import com.adelylria.ringlog.ui.importexport.ConflictReviewPanelTest;
 import com.adelylria.ringlog.update.SemanticVersionTest;
 import com.adelylria.ringlog.update.UpdateInstallerLauncherTest;
@@ -88,6 +91,7 @@ public final class RingLogTestSuite {
                 UpdateInstallerLauncherTest.class,
                 BuildInfoTest.class,
                 BirdEventFormattingTest.class,
+                BirdStatusCatalogTest.class,
                 AppPathsTest.class,
                 MediaPathResolverTest.class,
                 LegacyDataLocationDetectorTest.class,
@@ -112,10 +116,12 @@ public final class RingLogTestSuite {
                 BackupExportServiceTest.class,
                 RecordReportServiceTest.class,
                 BirdEventRepositoryTest.class,
+                CatalogRepositoryTest.class,
                 PortableReadOnlyTest.class,
                 PortableCopyServiceTest.class,
                 ApplicationIconTest.class,
                 CalendarDatePickerTest.class,
+                OpenStreetMapTileStoreTest.class,
                 BirdEventUiTest.class,
                 CatalogFormTest.class,
                 CapturePanelTest.class,

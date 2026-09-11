@@ -30,8 +30,8 @@ public final class SchemaBackupServiceTest {
             SchemaBackup backup = new SchemaBackupService().create(
                     paths,
                     paths.databasePath(),
-                    4,
                     5,
+                    6,
                     "1.0-test"
             );
 
@@ -47,7 +47,7 @@ public final class SchemaBackupServiceTest {
             try (Connection connection = Database.getReadOnlyConnection(
                     backup.database().toString()
             )) {
-                new DatabaseIntegrityValidator().requireValid(connection, 4);
+                new DatabaseIntegrityValidator().requireValid(connection, 5);
             }
 
             String manifest = Files.readString(backup.manifest(), StandardCharsets.UTF_8);
@@ -75,8 +75,8 @@ public final class SchemaBackupServiceTest {
             requireFailure(() -> new SchemaBackupService().create(
                     paths,
                     paths.databasePath(),
-                    4,
                     5,
+                    6,
                     "1.0-test"
             ), "An invalid SQLite source must not produce a schema backup");
 

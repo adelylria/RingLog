@@ -9,6 +9,7 @@ import javax.swing.SwingUtilities;
 
 import com.adelylria.ringlog.model.input.PlaceInput;
 import com.adelylria.ringlog.model.input.SpeciesInput;
+import com.adelylria.ringlog.model.view.SpeciesSummary;
 import com.adelylria.ringlog.ui.components.PlaceForm;
 import com.adelylria.ringlog.ui.components.SpeciesForm;
 import com.adelylria.ringlog.ui.theme.ThemeManager;
@@ -39,8 +40,24 @@ public final class CatalogFormTest {
             require("Sylvia atricapilla".equals(species.scientificName()),
                     "The species form should collect its visible values");
 
+            SpeciesForm speciesEditForm = new SpeciesForm(new SpeciesSummary(
+                    8L,
+                    "Curruca capirotada",
+                    "SYL-001",
+                    "Sylvia atricapilla",
+                    "Curruca capirotada",
+                    14L
+            ));
+            SpeciesInput editedSpecies = speciesEditForm.input();
+            require("SYL-001".equals(editedSpecies.code())
+                            && "Sylvia atricapilla".equals(editedSpecies.scientificName())
+                            && "Curruca capirotada".equals(editedSpecies.commonName()),
+                    "The edit form must preload every species field");
+
             PlaceForm placeForm = new PlaceForm();
             JTextField placeName = field(placeForm, "placeName");
+            JTextField autonomousCommunity = field(placeForm, "placeAutonomousCommunity");
+            JTextField country = field(placeForm, "placeCountry");
             JTextField latitude = field(placeForm, "placeLatitude");
             JTextField longitude = field(placeForm, "placeLongitude");
             require("Ej. Laguna norte".equals(
@@ -48,6 +65,8 @@ public final class CatalogFormTest {
                     "The place name should include a helpful example");
 
             placeName.setText("Laguna norte");
+            autonomousCommunity.setText("Illes Balears");
+            country.setText("España");
             latitude.setText("39,75");
             longitude.setText("2.80");
             PlaceInput place = placeForm.input();
@@ -55,6 +74,20 @@ public final class CatalogFormTest {
                     "Latitude should accept the decimal comma used in Spanish");
             require(Double.valueOf(2.80).equals(place.longitude()),
                     "Longitude should accept a decimal point too");
+            require("Illes Balears".equals(place.autonomousCommunity())
+                            && "España".equals(place.country()),
+                    "The place form should collect its administrative location");
+
+            PlaceForm editForm = new PlaceForm(new com.adelylria.ringlog.model.view.PlaceSummary(
+                    7L, "Els Rafals", "Pollença", "Illes Balears", "España",
+                    39.85, 2.98, "Referencia", true, false, 12L
+            ));
+            PlaceInput edited = editForm.input();
+            require("Els Rafals".equals(edited.name())
+                            && "Illes Balears".equals(edited.autonomousCommunity())
+                            && "España".equals(edited.country())
+                            && edited.favorite(),
+                    "The edit form must preload every place field");
         });
     }
 

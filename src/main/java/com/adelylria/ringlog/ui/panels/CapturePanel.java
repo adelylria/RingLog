@@ -35,6 +35,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 import com.adelylria.ringlog.model.EventType;
+import com.adelylria.ringlog.model.BirdStatusCatalog;
 import com.adelylria.ringlog.model.input.BirdEventInput;
 import com.adelylria.ringlog.model.view.BirdEventDetail;
 import com.adelylria.ringlog.model.view.BirdLookup;
@@ -59,7 +60,7 @@ public class CapturePanel extends JPanel {
     private final JComboBox<EventType> eventTypeCombo;
     private final JComboBox<PlaceSummary> placeCombo;
     private final JComboBox<String> sexCombo;
-    private final JComboBox<String> statusCombo;
+    private final JComboBox<BirdStatusChoice> statusCombo;
     private final JComboBox<String> conditionCombo;
     private final JComboBox<String> captureTypeCombo;
     private final DateSelector dateSelector;
@@ -105,7 +106,8 @@ public class CapturePanel extends JPanel {
         this.eventTypeCombo = new JComboBox<>(EventType.values());
         this.placeCombo = new JComboBox<>();
         this.sexCombo = combo("Sin indicar", "Macho", "Hembra");
-        this.statusCombo = combo("Correcto", "Pendiente", "Revisar");
+        this.statusCombo = birdStatusCombo();
+        this.statusCombo.setName("birdStatusField");
         this.conditionCombo = combo("Buen estado", "Regular", "Delicado");
         this.captureTypeCombo = combo("Sin indicar", "Captura", "Recaptura");
         this.dateSelector = new DateSelector(LocalDate.now());
@@ -224,7 +226,7 @@ public class CapturePanel extends JPanel {
         timeSelector.setTime(LocalTime.now());
         locationTextField.setText("");
         resetCombo(sexCombo, "Sin indicar", "Macho", "Hembra");
-        resetCombo(statusCombo, "Correcto", "Pendiente", "Revisar");
+        resetBirdStatusCombo("B0");
         resetCombo(conditionCombo, "Buen estado", "Regular", "Delicado");
         resetCombo(captureTypeCombo, "Sin indicar", "Captura", "Recaptura");
         ageEuringCodeField.setText("");
@@ -283,7 +285,7 @@ public class CapturePanel extends JPanel {
         timeSelector.setTime(parseTime(detail.eventTime()));
         locationTextField.setText(text(detail.locationText()));
         selectCode(sexCombo, detail.sexCode());
-        selectCode(statusCombo, detail.status());
+        selectBirdStatusCode(detail.status());
         selectCode(conditionCombo, detail.birdCondition());
         selectCode(captureTypeCombo, detail.captureType());
         ageEuringCodeField.setText(text(detail.ageEuringCode()));
@@ -372,7 +374,7 @@ public class CapturePanel extends JPanel {
         JPanel grid = grid();
         addField(grid, 0, "Sexo", sexCombo);
         addField(grid, 1, "Estado", statusCombo);
-        addField(grid, 2, "Condición", conditionCombo);
+        addField(grid, 2, "Condición general", conditionCombo);
         addField(grid, 3, "Iniciales", initialsField);
         addField(grid, 4, "Reproducción", reproductiveField);
         addField(grid, 5, "Intensidad de muda", moultIntensityField);
@@ -385,7 +387,7 @@ public class CapturePanel extends JPanel {
         measurements.setBorder(new javax.swing.border.EmptyBorder(15, 0, 0, 0));
         addNumber(measurements, "Ala", "wing");
         addNumber(measurements, "P3", "p3");
-        addNumber(measurements, "Torso", "torso");
+        addNumber(measurements, "Tarso", "torso");
         addNumber(measurements, "Peso", "weight");
         addNumber(measurements, "Grasa", "fat");
         addNumber(measurements, "Músculo", "muscle");
@@ -500,6 +502,17 @@ public class CapturePanel extends JPanel {
     private static JComboBox<String> combo(String... values) {
         JComboBox<String> combo = new JComboBox<>(values);
         combo.setPreferredSize(new Dimension(260, combo.getPreferredSize().height));
+        return combo;
+    }
+
+    private static JComboBox<BirdStatusChoice> birdStatusCombo() {
+        JComboBox<BirdStatusChoice> combo = new JComboBox<>();
+        combo.setMaximumRowCount(16);
+        combo.setPreferredSize(new Dimension(260, combo.getPreferredSize().height));
+        combo.getAccessibleContext().setAccessibleName("Estado del ave");
+        combo.getAccessibleContext().setAccessibleDescription(
+                "Código y descripción oficial del estado observado en el ave"
+        );
         return combo;
     }
 
@@ -729,7 +742,7 @@ public class CapturePanel extends JPanel {
                 parseOptionalInteger(numberFields.get("fat").getText()),
                 parseOptionalInteger(numberFields.get("muscle").getText()),
                 initialsField.getText().trim(),
-                statusCode((String) statusCombo.getSelectedItem()),
+                selectedBirdStatusCode(),
                 reproductiveField.getText().trim(),
                 moultIntensityField.getText().trim(),
                 moultExtensionField.getText().trim(),
@@ -776,16 +789,6 @@ public class CapturePanel extends JPanel {
         };
     }
 
-    private static String statusCode(String value) {
-        return switch (UiKit.display(value)) {
-            case "Correcto" -> "OK";
-            case "Pendiente" -> "PENDING";
-            case "Revisar" -> "REVIEW";
-            case "Sin indicar", "—" -> null;
-            default -> UiKit.display(value).toUpperCase(Locale.ROOT);
-        };
-    }
-
     private static String conditionCode(String value) {
         return switch (UiKit.display(value)) {
             case "Buen estado" -> "GOOD";
@@ -803,6 +806,38 @@ public class CapturePanel extends JPanel {
         combo.setSelectedIndex(0);
     }
 
+    private void resetBirdStatusCombo(String selectedCode) {
+        statusCombo.removeAllItems();
+        statusCombo.addItem(BirdStatusChoice.unspecified());
+        for (BirdStatusCatalog.Entry entry : BirdStatusCatalog.entries()) {
+            statusCombo.addItem(BirdStatusChoice.official(entry));
+        }
+        selectBirdStatusCode(selectedCode);
+    }
+
+    private void selectBirdStatusCode(String code) {
+        if (code == null || code.isBlank()) {
+            statusCombo.setSelectedIndex(0);
+            return;
+        }
+        String normalized = code.trim();
+        for (int index = 0; index < statusCombo.getItemCount(); index++) {
+            BirdStatusChoice choice = statusCombo.getItemAt(index);
+            if (choice.matches(normalized)) {
+                statusCombo.setSelectedIndex(index);
+                return;
+            }
+        }
+        BirdStatusChoice historical = BirdStatusChoice.historical(normalized);
+        statusCombo.addItem(historical);
+        statusCombo.setSelectedItem(historical);
+    }
+
+    private String selectedBirdStatusCode() {
+        BirdStatusChoice choice = (BirdStatusChoice) statusCombo.getSelectedItem();
+        return choice == null ? null : choice.code();
+    }
+
     private static void selectCode(JComboBox<String> combo, String value) {
         String display = value == null || value.isBlank()
                 ? "Sin indicar"
@@ -815,6 +850,34 @@ public class CapturePanel extends JPanel {
         }
         combo.addItem(display);
         combo.setSelectedItem(display);
+    }
+
+    private record BirdStatusChoice(String code, String label) {
+
+        private static BirdStatusChoice unspecified() {
+            return new BirdStatusChoice(null, "Sin indicar");
+        }
+
+        private static BirdStatusChoice official(BirdStatusCatalog.Entry entry) {
+            return new BirdStatusChoice(entry.code(), entry.displayLabel());
+        }
+
+        private static BirdStatusChoice historical(String code) {
+            String readable = UiKit.friendlyCode(code);
+            String label = code.equalsIgnoreCase(readable)
+                    ? code + " · Valor conservado del registro"
+                    : code + " · " + readable + " (valor conservado)";
+            return new BirdStatusChoice(code, label);
+        }
+
+        private boolean matches(String value) {
+            return code != null && code.equalsIgnoreCase(value);
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 
     private void setNumber(String key, Number value) {

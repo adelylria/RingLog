@@ -13,7 +13,9 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
+import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
@@ -114,6 +116,8 @@ public final class BirdEventUiTest {
 
         require(labels.contains("Código de edad EURING"),
                 "The form should use the schema's age EURING name");
+        require(labels.contains("Estado") && !labels.contains("Estado oficial (código)"),
+                "The bird-state selector should use the concise Estado label");
         require(!labels.contains("Latitud") && !labels.contains("Longitud"),
                 "Coordinates belong to places, not events");
         require(descendants(panel, JComboBox.class).stream().anyMatch(combo ->
@@ -228,6 +232,24 @@ public final class BirdEventUiTest {
         waitForCardCount(panel, 75);
     }
 
+    public static void archiveCanOrderRecordsByDateInBothDirections()
+            throws Exception {
+        CaptureListPanel panel = populatedDiary();
+        JComboBox<?> order = onEdt(() -> descendants(panel, JComboBox.class)
+                .stream()
+                .filter(combo -> "dateSortOrder".equals(combo.getName()))
+                .findFirst()
+                .orElse(null));
+        require(order != null
+                        && containsItemLabel(order, "Más recientes primero")
+                        && containsItemLabel(order, "Más antiguos primero"),
+                "The archive should offer both date-order directions");
+
+        waitForFirstVisibleRing(panel, "V25030");
+        selectComboLabel(order, "Más antiguos primero");
+        waitForFirstVisibleRing(panel, "V25075");
+    }
+
     public static void exportUsesEveryFilteredRecordNotOnlyVisibleCards()
             throws Exception {
         List<BirdEventTimelineItem> events = new ArrayList<>();
@@ -334,6 +356,10 @@ public final class BirdEventUiTest {
     }
 
     public static void detailShowsEveryFieldAndOffersIntegratedEditing() throws Exception {
+        String longNotes = "1 de 5. Capturas: Cinco zorzales comunes anillados. "
+                + "(V33907, V33908, V33909, V33910, V33911) Aranzadi-Sansebastián. "
+                + "Así como los capturados durante la jornada anterior.\n"
+                + "La segunda línea también debe conservarse completa y legible.";
         BirdEventDetail detail = new BirdEventDetail(
                 1L,
                 2L,
@@ -351,7 +377,7 @@ public final class BirdEventUiTest {
                 2,
                 2,
                 null,
-                null,
+                "B0",
                 null,
                 null,
                 null,
@@ -367,7 +393,7 @@ public final class BirdEventUiTest {
                 null,
                 39.8502,
                 2.9850,
-                null,
+                longNotes,
                 false,
                 List.of()
         );
@@ -395,14 +421,71 @@ public final class BirdEventUiTest {
                                 && "—".equals(label.getText())),
                 "The detail identity should not render an empty condition badge");
         List<String> texts = labels.stream().map(JLabel::getText).toList();
-        require(texts.contains("Estado") && texts.contains("Reproducción"),
+        require(texts.contains("Código de estado") && texts.contains("Reproducción"),
                 "The complete bird card must keep fields whose values are missing");
-        require(texts.contains("Ala") && texts.contains("Nubes"),
+        require(texts.contains("Ala") && texts.contains("Tarso")
+                        && !texts.contains("Torso") && texts.contains("Nubes"),
                 "Measurements and weather must remain visible when empty");
+        require(texts.contains("Código de estado") && texts.contains("B0"),
+                "The bird card should make the official status code explicit");
+        JTextArea statusDescription = onEdt(() -> descendants(panel, JTextArea.class).stream()
+                .filter(area -> "birdStatusDescription".equals(area.getName()))
+                .findFirst()
+                .orElse(null));
+        require(statusDescription != null
+                        && "Aparentemente en buenas condiciones".equals(
+                                statusDescription.getText())
+                        && statusDescription.getLineWrap(),
+                "The complete status meaning should remain readable without being cut off");
         require(texts.contains("Notas de campo")
                         && texts.contains("Archivo y revisión")
                         && texts.contains("Sin fotografías"),
                 "Notes, review state and photo state must always be explicit");
+        require(descendants(panel, JButton.class).stream().anyMatch(button ->
+                        "© OpenStreetMap contributors".equals(button.getText())),
+                "A georeferenced record should keep attribution inside its compact map");
+        require(!texts.contains("Ubicación en el mapa")
+                        && !texts.contains("Vista del lugar guardado en este registro."),
+                "The map should not repeat explanatory copy that is already understood");
+        JPanel loadedMap = onEdt(() -> descendants(panel, JPanel.class).stream()
+                .filter(candidate -> "loadedLocationMap".equals(candidate.getName()))
+                .findFirst()
+                .orElse(null));
+        require(loadedMap != null,
+                "The georeferenced detail should show its map without an extra step");
+        JPanel mapCanvas = onEdt(() -> descendants(panel, JPanel.class).stream()
+                .filter(candidate -> "openStreetMapCanvas".equals(candidate.getName()))
+                .findFirst()
+                .orElse(null));
+        require(mapCanvas != null
+                        && mapCanvas.getMouseMotionListeners().length > 0
+                        && mapCanvas.getMouseWheelListeners().length > 0,
+                "The embedded map should support dragging and wheel zoom like a web map");
+        require(descendants(panel, JButton.class).stream().noneMatch(button ->
+                        "−".equals(button.getText())
+                                || "+".equals(button.getText())
+                                || "Abrir en OpenStreetMap".equals(button.getText())),
+                "The map should not need separate zoom or external-map buttons");
+        JTextArea notes = onEdt(() -> descendants(panel, JTextArea.class).stream()
+                .filter(area -> "fieldNotesText".equals(area.getName()))
+                .findFirst()
+                .orElse(null));
+        require(notes != null,
+                "Long field notes should use a wrapping text component");
+        require(longNotes.equals(notes.getText()),
+                "The detail must preserve the complete field notes");
+        require(notes.getLineWrap() && notes.getWrapStyleWord() && !notes.isEditable(),
+                "Field notes should wrap by words without becoming editable in the detail view");
+        int wideHeight = onEdt(() -> {
+            notes.setSize(720, Short.MAX_VALUE);
+            return notes.getPreferredSize().height;
+        });
+        int narrowHeight = onEdt(() -> {
+            notes.setSize(260, Short.MAX_VALUE);
+            return notes.getPreferredSize().height;
+        });
+        require(narrowHeight > wideHeight,
+                "The notes block should grow vertically instead of clipping long text");
 
         JButton edit = onEdt(() -> descendants(panel, JButton.class).stream()
                 .filter(button -> "Editar entrada".equals(button.getText()))
@@ -486,6 +569,27 @@ public final class BirdEventUiTest {
         );
     }
 
+    private static void waitForFirstVisibleRing(
+            CaptureListPanel panel,
+            String expectedRing
+    ) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        String actual;
+        do {
+            actual = onEdt(() -> descendants(panel, BirdEventCard.class).stream()
+                    .findFirst()
+                    .map(card -> card.getAccessibleContext().getAccessibleName())
+                    .orElse(""));
+            if (actual.endsWith(" · " + expectedRing)) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError(
+                "Expected first visible ring " + expectedRing + ", got " + actual
+        );
+    }
+
     private static void waitForLabel(Component component, String expected)
             throws Exception {
         long deadline = System.nanoTime() + 5_000_000_000L;
@@ -513,6 +617,16 @@ public final class BirdEventUiTest {
     private static boolean containsItem(JComboBox<?> combo, Object expected) {
         for (int index = 0; index < combo.getItemCount(); index++) {
             if (expected.equals(combo.getItemAt(index))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsItemLabel(JComboBox<?> combo, String expected) {
+        for (int index = 0; index < combo.getItemCount(); index++) {
+            Object item = combo.getItemAt(index);
+            if (item != null && expected.equals(item.toString())) {
                 return true;
             }
         }
@@ -551,6 +665,7 @@ public final class BirdEventUiTest {
         activeTypeFilterShowsMoreThanTheDefaultPage();
         placeAndDateFiltersUseTheWholeLoadedDiary();
         archiveAlternatesDayMonthAndYearFilters();
+        archiveCanOrderRecordsByDateInBothDirections();
         exportUsesEveryFilteredRecordNotOnlyVisibleCards();
         calendarExplainsDaysWithoutMatchingEntries();
         detailShowsEveryFieldAndOffersIntegratedEditing();

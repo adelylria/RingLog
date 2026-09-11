@@ -9,6 +9,10 @@ import java.util.Collections;
 final class NativeSchema {
 
     static final Map<String, List<String>> SHEETS;
+    static final List<String> LEGACY_PLACE_COLUMNS = List.of(
+            "stable_key", "name", "locality", "latitude", "longitude", "notes",
+            "is_favorite", "is_default", "active", "created_at", "updated_at"
+    );
 
     static {
         Map<String, List<String>> sheets = new LinkedHashMap<>();
@@ -20,8 +24,9 @@ final class NativeSchema {
                 "stable_key", "ring_number", "species_stable_key", "created_at", "updated_at"
         ));
         sheets.put("places", List.of(
-                "stable_key", "name", "locality", "latitude", "longitude", "notes",
-                "is_favorite", "is_default", "active", "created_at", "updated_at"
+                "stable_key", "name", "locality", "autonomous_community", "country",
+                "latitude", "longitude", "notes", "is_favorite", "is_default", "active",
+                "created_at", "updated_at"
         ));
         sheets.put("events", List.of(
                 "stable_key", "migration_key", "bird_stable_key", "event_type", "event_date",

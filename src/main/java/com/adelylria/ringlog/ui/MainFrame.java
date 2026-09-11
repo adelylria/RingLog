@@ -126,7 +126,8 @@ public class MainFrame extends JFrame {
                 eventRepository,
                 () -> navigate(CAPTURES),
                 this::editEvent,
-                context.capabilities().mutateDiary()
+                context.capabilities().mutateDiary(),
+                context.paths().dataRoot().resolve("map-cache")
         );
         capturePanel = context.capabilities().mutateDiary()
                 ? new CapturePanel(

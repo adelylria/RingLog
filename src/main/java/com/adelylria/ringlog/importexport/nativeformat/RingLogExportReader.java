@@ -90,23 +90,30 @@ public final class RingLogExportReader {
             Map<String, String> textStore
     ) {
         Sheet sheet = requiredSheet(workbook, sheetName);
-        exactHeader(sheet, columns);
+        List<String> readableColumns = "places".equals(sheetName)
+                && headerMatches(sheet, NativeSchema.LEGACY_PLACE_COLUMNS)
+                ? NativeSchema.LEGACY_PLACE_COLUMNS
+                : columns;
+        exactHeader(sheet, readableColumns);
         List<NativeRow> result = new ArrayList<>();
         for (int index = 1; index <= sheet.getLastRowNum(); index++) {
             Row row = sheet.getRow(index);
             if (row == null || empty(row)) {
                 continue;
             }
-            rejectExtraCells(row, columns.size());
+            rejectExtraCells(row, readableColumns.size());
             Map<String, String> values = new LinkedHashMap<>();
-            for (int column = 0; column < columns.size(); column++) {
+            for (int column = 0; column < readableColumns.size(); column++) {
                 Cell cell = row.getCell(column);
                 if (cell == null || cell.getCellType() != CellType.STRING) {
                     throw invalid(sheetName, index, "Todas las celdas deben estar codificadas.");
                 }
-                values.put(columns.get(column), NativeValueCodec.decode(
+                values.put(readableColumns.get(column), NativeValueCodec.decode(
                         cell.getStringCellValue(), textStore
                 ));
+            }
+            for (String column : columns) {
+                values.putIfAbsent(column, null);
             }
             result.add(new NativeRow(values));
         }
@@ -206,7 +213,7 @@ public final class RingLogExportReader {
 
     private static void validate(NativeExportModel model, boolean packaged) {
         UUID.fromString(requiredMetadata(model, "export_id"));
-        if (!Set.of("3", "4").contains(requiredMetadata(model, "schema_version"))) {
+        if (!Set.of("3", "4", "5").contains(requiredMetadata(model, "schema_version"))) {
             throw new IllegalArgumentException(
                     "El export no corresponde a un schema RingLog compatible."
             );
@@ -357,6 +364,27 @@ public final class RingLogExportReader {
                 );
             }
         }
+    }
+
+    private static boolean headerMatches(Sheet sheet, List<String> columns) {
+        Row header = sheet.getRow(0);
+        if (header == null) {
+            return false;
+        }
+        for (int index = 0; index < columns.size(); index++) {
+            Cell cell = header.getCell(index);
+            if (cell == null || cell.getCellType() != CellType.STRING
+                    || !columns.get(index).equals(cell.getStringCellValue())) {
+                return false;
+            }
+        }
+        for (int index = columns.size(); index < header.getLastCellNum(); index++) {
+            Cell cell = header.getCell(index);
+            if (cell != null && cell.getCellType() != CellType.BLANK) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String stringCell(Row row, int index, String field) {

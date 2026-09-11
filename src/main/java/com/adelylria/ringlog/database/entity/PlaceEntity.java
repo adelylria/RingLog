@@ -13,6 +13,8 @@ public class PlaceEntity {
     public static final String STABLE_KEY = "stable_key";
     public static final String NAME = "name";
     public static final String LOCALITY = "locality";
+    public static final String AUTONOMOUS_COMMUNITY = "autonomous_community";
+    public static final String COUNTRY = "country";
     public static final String LATITUDE = "latitude";
     public static final String LONGITUDE = "longitude";
     public static final String NOTES = "notes";
@@ -31,6 +33,12 @@ public class PlaceEntity {
 
     @DatabaseField(columnName = LOCALITY)
     private String locality;
+
+    @DatabaseField(columnName = AUTONOMOUS_COMMUNITY)
+    private String autonomousCommunity;
+
+    @DatabaseField(columnName = COUNTRY)
+    private String country;
 
     @DatabaseField(columnName = LATITUDE)
     private Double latitude;
@@ -56,6 +64,8 @@ public class PlaceEntity {
     public PlaceEntity(
             String name,
             String locality,
+            String autonomousCommunity,
+            String country,
             Double latitude,
             Double longitude,
             String notes,
@@ -64,11 +74,25 @@ public class PlaceEntity {
     ) {
         this.name = name;
         this.locality = locality;
+        this.autonomousCommunity = autonomousCommunity;
+        this.country = country;
         this.latitude = latitude;
         this.longitude = longitude;
         this.notes = notes;
         this.favorite = favorite;
         this.defaultPlace = defaultPlace;
+    }
+
+    public PlaceEntity(
+            String name,
+            String locality,
+            Double latitude,
+            Double longitude,
+            String notes,
+            boolean favorite,
+            boolean defaultPlace
+    ) {
+        this(name, locality, null, null, latitude, longitude, notes, favorite, defaultPlace);
     }
 
     public long id() {
@@ -105,6 +129,22 @@ public class PlaceEntity {
 
     public void setLocality(String locality) {
         this.locality = locality;
+    }
+
+    public String getAutonomousCommunity() {
+        return autonomousCommunity;
+    }
+
+    public void setAutonomousCommunity(String autonomousCommunity) {
+        this.autonomousCommunity = autonomousCommunity;
+    }
+
+    public String getCountry() {
+        return country;
+    }
+
+    public void setCountry(String country) {
+        this.country = country;
     }
 
     public Double getLatitude() {

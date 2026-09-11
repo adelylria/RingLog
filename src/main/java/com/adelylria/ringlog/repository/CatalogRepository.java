@@ -56,12 +56,15 @@ public class CatalogRepository {
                 SELECT
                     s.id,
                     COALESCE(NULLIF(s.common_name, ''), s.scientific_name) AS name,
+                    s.code,
+                    s.scientific_name,
+                    s.common_name,
                     COUNT(e.id) AS event_count
                 FROM species s
                 LEFT JOIN bird b ON b.species_id = s.id
                 LEFT JOIN bird_event e ON e.bird_id = b.id
                 WHERE s.active = 1
-                GROUP BY s.id, s.common_name, s.scientific_name
+                GROUP BY s.id, s.code, s.common_name, s.scientific_name
                 ORDER BY event_count DESC, name ASC
                 """;
 
@@ -74,6 +77,9 @@ public class CatalogRepository {
                 return OrmQuery.list(dao, sql, result -> new SpeciesSummary(
                         getLong(result, "id"),
                         getString(result, "name"),
+                        getString(result, "code"),
+                        getString(result, "scientific_name"),
+                        getString(result, "common_name"),
                         getLong(result, "event_count")
                 ));
             });
@@ -110,6 +116,44 @@ public class CatalogRepository {
                 );
             }
             throw new RepositoryException("Error guardando la especie", exception);
+        }
+    }
+
+    public long updateSpecies(long speciesId, SpeciesInput input) {
+        if (speciesId < 1) {
+            throw new IllegalArgumentException("Falta la especie que quieres editar.");
+        }
+        if (input == null) {
+            throw new IllegalArgumentException("Indica los datos de la especie.");
+        }
+        String scientificName = required(input.scientificName(),
+                "Indica el nombre científico.");
+
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            return databaseAccess.withOrm(source -> {
+                Dao<SpeciesEntity, Long> dao = DaoManager.createDao(
+                        source,
+                        SpeciesEntity.class
+                );
+                SpeciesEntity species = dao.queryForId(speciesId);
+                if (species == null || !species.isActive()) {
+                    throw new IllegalArgumentException(
+                            "La especie ya no está disponible para editarla."
+                    );
+                }
+                species.setCode(optional(input.code()));
+                species.setScientificName(scientificName);
+                species.setCommonName(optional(input.commonName()));
+                dao.update(species);
+                return species.id();
+            });
+        } catch (SQLException exception) {
+            if (isConstraintViolation(exception)) {
+                throw new IllegalArgumentException(
+                        "Ya existe una especie con ese nombre científico o código."
+                );
+            }
+            throw new RepositoryException("Error actualizando la especie", exception);
         }
     }
 
@@ -174,6 +218,8 @@ public class CatalogRepository {
                     p.id,
                     p.name,
                     p.locality,
+                    p.autonomous_community,
+                    p.country,
                     p.latitude,
                     p.longitude,
                     p.notes,
@@ -183,8 +229,8 @@ public class CatalogRepository {
                 FROM place p
                 LEFT JOIN bird_event e ON e.place_id = p.id
                 WHERE p.active = 1
-                GROUP BY p.id, p.name, p.locality, p.latitude, p.longitude,
-                         p.notes, p.is_favorite, p.is_default
+                GROUP BY p.id, p.name, p.locality, p.autonomous_community, p.country,
+                         p.latitude, p.longitude, p.notes, p.is_favorite, p.is_default
                 ORDER BY p.is_default DESC,
                          p.is_favorite DESC,
                          event_count DESC,
@@ -201,6 +247,8 @@ public class CatalogRepository {
                         getLong(result, "id"),
                         getString(result, "name"),
                         getString(result, "locality"),
+                        getString(result, "autonomous_community"),
+                        getString(result, "country"),
                         getDouble(result, "latitude"),
                         getDouble(result, "longitude"),
                         getString(result, "notes"),
@@ -223,6 +271,8 @@ public class CatalogRepository {
         PlaceEntity place = new PlaceEntity(
                 name,
                 optional(input.locality()),
+                optional(input.autonomousCommunity()),
+                optional(input.country()),
                 input.latitude(),
                 input.longitude(),
                 optional(input.notes()),
@@ -254,6 +304,58 @@ public class CatalogRepository {
                 );
             }
             throw new RepositoryException("Error guardando el lugar", exception);
+        }
+    }
+
+    public long updatePlace(long placeId, PlaceInput input) {
+        if (placeId < 1) {
+            throw new IllegalArgumentException("Falta el lugar que quieres editar.");
+        }
+        if (input == null) {
+            throw new IllegalArgumentException("Indica los datos del lugar.");
+        }
+        String name = required(input.name(), "Indica el nombre del lugar.");
+        validateCoordinates(input.latitude(), input.longitude());
+
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            return databaseAccess.withOrm(source ->
+                    TransactionManager.callInTransaction(source, () -> {
+                        Dao<PlaceEntity, Long> dao = DaoManager.createDao(
+                                source,
+                                PlaceEntity.class
+                        );
+                        PlaceEntity place = dao.queryForId(placeId);
+                        if (place == null || !place.isActive()) {
+                            throw new IllegalArgumentException(
+                                    "El lugar ya no está disponible para editarlo."
+                            );
+                        }
+                        if (input.isDefault()) {
+                            UpdateBuilder<PlaceEntity, Long> update = dao.updateBuilder();
+                            update.updateColumnValue(PlaceEntity.DEFAULT, false);
+                            update.where().eq(PlaceEntity.DEFAULT, true);
+                            update.update();
+                        }
+                        place.setName(name);
+                        place.setLocality(optional(input.locality()));
+                        place.setAutonomousCommunity(optional(input.autonomousCommunity()));
+                        place.setCountry(optional(input.country()));
+                        place.setLatitude(input.latitude());
+                        place.setLongitude(input.longitude());
+                        place.setNotes(optional(input.notes()));
+                        place.setFavorite(input.favorite());
+                        place.setDefaultPlace(input.isDefault());
+                        dao.update(place);
+                        return place.id();
+                    })
+            );
+        } catch (SQLException exception) {
+            if (isConstraintViolation(exception)) {
+                throw new IllegalArgumentException(
+                        "Ya existe un lugar con ese nombre y localidad."
+                );
+            }
+            throw new RepositoryException("Error actualizando el lugar", exception);
         }
     }
 

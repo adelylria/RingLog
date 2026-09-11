@@ -16,16 +16,19 @@ public final class SchemaVersionContractTest {
     private SchemaVersionContractTest() {
     }
 
-    public static void freshDatabaseUsesSchemaV4() throws Exception {
-        Path root = Files.createTempDirectory("ringlog-schema-v4-fresh-");
+    public static void freshDatabaseUsesSchemaV5() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-schema-v5-fresh-");
         try {
             Path database = root.resolve("data/ringlog.db");
             Database.initialize(database.toString());
 
-            require(userVersion(database) == 4,
-                    "A fresh RingLog database must advertise managed-media schema v4");
-            require(Database.SCHEMA_VERSION == 4,
-                    "The shared current schema constant must be v4");
+            require(userVersion(database) == 5,
+                    "A fresh RingLog database must advertise place-region schema v5");
+            require(Database.SCHEMA_VERSION == 5,
+                    "The shared current schema constant must be v5");
+            require(hasColumn(database, "place", "autonomous_community")
+                            && hasColumn(database, "place", "country"),
+                    "A fresh database must include both administrative place fields");
         } finally {
             deleteDirectory(root);
         }
@@ -76,11 +79,16 @@ public final class SchemaVersionContractTest {
             Path database = root.resolve("ringlog.db");
             Database.initialize(database.toString());
             insertPhoto(database, "events/ab/managed-photo.jpg");
+            setUserVersion(database, 4);
 
             DatabaseUpgradeService.Inspection inspection = new DatabaseUpgradeService()
                     .inspect(database, new MediaPathResolver(AppPaths.forDataRoot(root)));
-            require(inspection.state() == DatabaseUpgradeService.SchemaState.READY,
-                    "Schema v4 must accept canonical managed media references");
+            require(inspection.state() == DatabaseUpgradeService.SchemaState.SQL_UPGRADE_REQUIRED,
+                    "Schema v4 must request the additive place-region migration");
+            new MediaPathResolver(AppPaths.forDataRoot(root))
+                    .resolveEventPhoto("events/ab/managed-photo.jpg");
+
+            setUserVersion(database, 5);
 
             try (Connection connection = Database.getConnection(database.toString());
                  Statement statement = connection.createStatement()) {
@@ -93,6 +101,53 @@ public final class SchemaVersionContractTest {
             ), "Schema v4 must reject a physical path that bypasses MediaPathResolver");
         } finally {
             deleteDirectory(root);
+        }
+    }
+
+    public static void v4PlaceRegionMigrationPreservesExistingPlaces() throws Exception {
+        Path database = Files.createTempFile("ringlog-place-v4-to-v5-", ".db");
+        try (Connection connection = Database.getConnection(database.toString());
+             Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    CREATE TABLE place (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        stable_key TEXT NOT NULL UNIQUE,
+                        name TEXT NOT NULL,
+                        locality TEXT
+                    )
+                    """);
+            statement.executeUpdate("""
+                    INSERT INTO place(stable_key, name, locality)
+                    VALUES ('50000000-0000-0000-0000-000000000001', 'Els Rafals', 'Pollença')
+                    """);
+            statement.execute("PRAGMA user_version = 4");
+
+            connection.setAutoCommit(false);
+            V4ToV5PlaceRegionMigration migration = new V4ToV5PlaceRegionMigration();
+            migration.migrate(connection);
+            statement.execute("PRAGMA user_version = 5");
+            migration.validate(connection);
+            connection.commit();
+
+            require(userVersion(database) == 5,
+                    "The additive migration must finish at schema v5");
+            require(hasColumn(database, "place", "autonomous_community")
+                            && hasColumn(database, "place", "country"),
+                    "The migration must add both administrative place fields");
+            try (ResultSet row = statement.executeQuery("""
+                    SELECT stable_key, name, locality, autonomous_community, country
+                    FROM place
+                    """)) {
+                require(row.next()
+                                && "50000000-0000-0000-0000-000000000001".equals(row.getString(1))
+                                && "Els Rafals".equals(row.getString(2))
+                                && "Pollença".equals(row.getString(3))
+                                && row.getString(4) == null
+                                && row.getString(5) == null,
+                        "The migration must preserve the existing place byte-for-byte logically");
+            }
+        } finally {
+            Files.deleteIfExists(database);
         }
     }
 
@@ -162,6 +217,20 @@ public final class SchemaVersionContractTest {
         }
     }
 
+    private static boolean hasColumn(Path database, String table, String column)
+            throws Exception {
+        try (Connection connection = Database.getConnection(database.toString());
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (result.next()) {
+                if (column.equals(result.getString("name"))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
     private static void requireSqlFailure(ThrowingAction action, String message)
             throws Exception {
         try {
@@ -195,10 +264,11 @@ public final class SchemaVersionContractTest {
     }
 
     public static void main(String[] args) throws Exception {
-        freshDatabaseUsesSchemaV4();
+        freshDatabaseUsesSchemaV5();
         schemaV3UsesLegacyMediaSemantics();
         v3DatabaseIsRecognizedAsNeedingMediaMigration();
         schemaV4UsesManagedMediaReferences();
+        v4PlaceRegionMigrationPreservesExistingPlaces();
         mediaReferencesAreOnlyResolvedThroughMediaPathResolver();
         System.out.println("SchemaVersionContractTest: PASS");
     }

@@ -127,6 +127,68 @@ public final class CapturePanelTest {
         );
     }
 
+    public static void birdStatusSelectorUsesTheOfficialCatalogAndStoresItsCode()
+            throws Exception {
+        CatalogRepository catalog = new CatalogRepository("unused.db") {
+            @Override
+            public List<SpeciesOption> findSpeciesOptions() {
+                return List.of(new SpeciesOption(7L, "Turdus philomelos"));
+            }
+
+            @Override
+            public List<PlaceSummary> findPlaceSummaries() {
+                return List.of();
+            }
+        };
+        AtomicReference<BirdEventInput> savedInput = new AtomicReference<>();
+        CountDownLatch saved = new CountDownLatch(1);
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override
+            public long insert(BirdEventInput input) {
+                savedInput.set(input);
+                saved.countDown();
+                return 1L;
+            }
+        };
+        CapturePanel[] holder = new CapturePanel[1];
+        SwingUtilities.invokeAndWait(() -> holder[0] = new CapturePanel(
+                repository,
+                catalog,
+                ignored -> { },
+                () -> { }
+        ));
+        CapturePanel panel = holder[0];
+        JComboBox<?> species = findNamed(panel, "speciesField", JComboBox.class);
+        JComboBox<?> status = findNamed(panel, "birdStatusField", JComboBox.class);
+        waitFor(() -> species.getItemCount() == 1,
+                "The test species should be available in the form");
+
+        require(status != null && status.getItemCount() == 49,
+                "The status selector should contain 48 official states plus Sin indicar");
+        Object injuredByRing = null;
+        for (int index = 0; index < status.getItemCount(); index++) {
+            Object item = status.getItemAt(index);
+            if (item != null && item.toString().startsWith("F5 · ")) {
+                injuredByRing = item;
+                break;
+            }
+        }
+        require(injuredByRing != null,
+                "The official F5 status should be selectable with its description");
+        Object selectedStatus = injuredByRing;
+        SwingUtilities.invokeAndWait(() -> {
+            findNamed(panel, "ringNumberField", JTextField.class).setText("V12345");
+            species.setSelectedIndex(0);
+            status.setSelectedItem(selectedStatus);
+            findButton(panel, "Guardar evento").doClick();
+        });
+
+        require(saved.await(2, TimeUnit.SECONDS),
+                "Saving the form should deliver the selected bird status");
+        require(savedInput.get() != null && "F5".equals(savedInput.get().status()),
+                "Only the stable official code should be persisted");
+    }
+
     public static void editModeUsesTheFormAndKeepsHistoricalCatalogValues()
             throws Exception {
         CatalogRepository emptyCatalog = new CatalogRepository("unused.db") {
@@ -313,6 +375,7 @@ public final class CapturePanelTest {
         timeSelectorProvidesIsoHourAndMinute();
         timeSelectorCanRepresentAnUnknownTime();
         formEmbedsAccessibleDateAndTimeSelectors();
+        birdStatusSelectorUsesTheOfficialCatalogAndStoresItsCode();
         editModeUsesTheFormAndKeepsHistoricalCatalogValues();
         System.out.println("CapturePanelTest: PASS");
     }

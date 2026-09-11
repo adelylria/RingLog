@@ -567,8 +567,8 @@ public final class BirdEventRepositoryTest {
                     () -> repository.insert(eventInputWithMeasurements(
                             "MEASURE-03", 80.0, 52.0, -1.0, 22.0
                     )),
-                    "torso",
-                    "Negative torso measurements should be rejected"
+                    "tarso",
+                    "Negative tarsus measurements should be rejected"
             );
             requireThrowsContaining(
                     () -> repository.insert(eventInputWithMeasurements(

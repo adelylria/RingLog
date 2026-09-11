@@ -12,12 +12,15 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 
 import com.adelylria.ringlog.model.input.PlaceInput;
+import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
 public class PlaceForm extends JPanel {
 
     private final JTextField nameField = new JTextField();
     private final JTextField localityField = new JTextField();
+    private final JTextField autonomousCommunityField = new JTextField();
+    private final JTextField countryField = new JTextField();
     private final JTextField latitudeField = new JTextField();
     private final JTextField longitudeField = new JTextField();
     private final JTextArea notesArea = new JTextArea(4, 28);
@@ -31,6 +34,9 @@ public class PlaceForm extends JPanel {
                 "Ej. Laguna norte");
         configureField(localityField, "placeLocality", "Localidad",
                 "Ej. Pollença");
+        configureField(autonomousCommunityField, "placeAutonomousCommunity",
+                "Comunidad autónoma", "Ej. Illes Balears");
+        configureField(countryField, "placeCountry", "País", "Ej. España");
         configureField(latitudeField, "placeLatitude", "Latitud",
                 "Ej. 39,7500");
         configureField(longitudeField, "placeLongitude", "Longitud",
@@ -50,10 +56,28 @@ public class PlaceForm extends JPanel {
 
         addField(0, "Nombre *", nameField);
         addField(1, "Localidad", localityField);
+        addField(2, "Comunidad autónoma", autonomousCommunityField);
+        addField(3, "País", countryField);
         addCoordinates();
-        addField(3, "Notas", new JScrollPane(notesArea));
-        addField(4, "", favoriteCheck);
-        addField(5, "", defaultCheck);
+        addField(5, "Notas", new JScrollPane(notesArea));
+        addField(6, "", favoriteCheck);
+        addField(7, "", defaultCheck);
+    }
+
+    public PlaceForm(PlaceSummary place) {
+        this();
+        if (place == null) {
+            throw new IllegalArgumentException("Falta el lugar que quieres editar.");
+        }
+        nameField.setText(text(place.name()));
+        localityField.setText(text(place.locality()));
+        autonomousCommunityField.setText(text(place.autonomousCommunity()));
+        countryField.setText(text(place.country()));
+        latitudeField.setText(number(place.latitude()));
+        longitudeField.setText(number(place.longitude()));
+        notesArea.setText(text(place.notes()));
+        favoriteCheck.setSelected(place.favorite());
+        defaultCheck.setSelected(place.isDefault());
     }
 
     public PlaceInput input() {
@@ -63,6 +87,8 @@ public class PlaceForm extends JPanel {
         return new PlaceInput(
                 nameField.getText(),
                 localityField.getText(),
+                autonomousCommunityField.getText(),
+                countryField.getText(),
                 optionalNumber(latitudeField.getText(), "La latitud debe ser un número válido."),
                 optionalNumber(longitudeField.getText(), "La longitud debe ser un número válido."),
                 notesArea.getText(),
@@ -76,7 +102,7 @@ public class PlaceForm extends JPanel {
         coordinates.setOpaque(false);
         addCoordinateField(coordinates, 0, "Latitud", latitudeField, 0, 8);
         addCoordinateField(coordinates, 1, "Longitud", longitudeField, 8, 0);
-        addField(2, "Coordenadas", coordinates);
+        addField(4, "Coordenadas", coordinates);
     }
 
     private void addCoordinateField(
@@ -115,8 +141,16 @@ public class PlaceForm extends JPanel {
         constraints.gridy = row;
         constraints.weightx = 1;
         constraints.fill = GridBagConstraints.HORIZONTAL;
-        constraints.insets = new Insets(0, 0, row >= 4 ? 6 : 12, 0);
+        constraints.insets = new Insets(0, 0, row >= 6 ? 6 : 12, 0);
         add(item, constraints);
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String number(Double value) {
+        return value == null ? "" : Double.toString(value);
     }
 
     private static Double optionalNumber(String value, String message) {

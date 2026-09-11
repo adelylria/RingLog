@@ -6,6 +6,8 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
 
+import com.adelylria.ringlog.model.BirdStatusCatalog;
+
 import com.adelylria.ringlog.model.view.BirdEventDetail;
 
 final class RecordReportText {
@@ -59,6 +61,16 @@ final class RecordReportText {
         String raw = value.toString();
         String readable = friendly(raw);
         return raw.equals(readable) ? raw : raw + " · " + readable;
+    }
+
+    static String birdStatus(Object value) {
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        String raw = value.toString().trim();
+        return BirdStatusCatalog.find(raw)
+                .map(BirdStatusCatalog.Entry::displayLabel)
+                .orElseGet(() -> coded(raw));
     }
 
     static String date(String isoDate) {

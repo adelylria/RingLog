@@ -99,11 +99,11 @@ public final class SchemaMigrationTest {
     private SchemaMigrationTest() {
     }
 
-    public static void freshDatabaseIsV4AndCurrentEntitiesGenerateStableKeys()
+    public static void freshDatabaseIsV5AndCurrentEntitiesGenerateStableKeys()
             throws Exception {
-        require(Database.SCHEMA_VERSION == 4,
-                "The application must expose schema version 4 from one shared constant");
-        Path directory = Files.createTempDirectory("ringlog-v4-fresh-");
+        require(Database.SCHEMA_VERSION == 5,
+                "The application must expose schema version 5 from one shared constant");
+        Path directory = Files.createTempDirectory("ringlog-v5-fresh-");
         Path database = directory.resolve("ringlog.db");
         try {
             Database.initialize(database.toString());
@@ -111,8 +111,11 @@ public final class SchemaMigrationTest {
 
             try (Connection connection = Database.getConnection(database.toString());
                  Statement statement = connection.createStatement()) {
-                require(singleLong(statement, "PRAGMA user_version") == 4,
-                        "A fresh database must be schema v4");
+                require(singleLong(statement, "PRAGMA user_version") == 5,
+                        "A fresh database must be schema v5");
+                requireColumns(statement, "place", Set.of(
+                        "autonomous_community", "country"
+                ));
                 requireObjects(statement, "table", V3_TABLES);
                 requireObjects(statement, "index", V3_INDEXES);
                 requireObjects(statement, "trigger", Set.of(
@@ -146,7 +149,7 @@ public final class SchemaMigrationTest {
                 require(singleLong(statement, "PRAGMA quick_check") == 0,
                         "quick_check should return its only OK row");
                 try (ResultSet foreignKeys = statement.executeQuery("PRAGMA foreign_key_check")) {
-                    require(!foreignKeys.next(), "Fresh v4 data must satisfy foreign keys");
+                    require(!foreignKeys.next(), "Fresh v5 data must satisfy foreign keys");
                 }
             }
             Database.validate(database.toString());
@@ -261,7 +264,7 @@ public final class SchemaMigrationTest {
         try (Connection connection = Database.getConnection(database.toString());
              Statement statement = connection.createStatement()) {
             statement.execute("CREATE TABLE sentinel (value TEXT)");
-            statement.execute("PRAGMA user_version = 5");
+            statement.execute("PRAGMA user_version = 6");
         }
         try {
             requireSqlFailure(() -> Database.initialize(database.toString()),
@@ -276,8 +279,8 @@ public final class SchemaMigrationTest {
         }
     }
 
-    public static void initializingV4AgainKeepsStableKeys() throws Exception {
-        Path directory = Files.createTempDirectory("ringlog-v4-idempotent-");
+    public static void initializingV5AgainKeepsStableKeys() throws Exception {
+        Path directory = Files.createTempDirectory("ringlog-v5-idempotent-");
         Path database = directory.resolve("ringlog.db");
         try {
             Database.initialize(database.toString());
@@ -287,7 +290,7 @@ public final class SchemaMigrationTest {
             Database.initialize(database.toString());
 
             require(before.equals(stableKeys(database)),
-                    "Reinitializing schema v4 must not replace persistent stable keys");
+                    "Reinitializing schema v5 must not replace persistent stable keys");
         } finally {
             deleteDirectory(directory);
         }
@@ -660,11 +663,11 @@ public final class SchemaMigrationTest {
             """;
 
     public static void main(String[] args) throws Exception {
-        freshDatabaseIsV4AndCurrentEntitiesGenerateStableKeys();
+        freshDatabaseIsV5AndCurrentEntitiesGenerateStableKeys();
         exactPragmaZeroV2IsDetectedAsLogicalSchemaTwo();
         populatedV2DatabaseMigratesWithoutLosingValues();
         unknownOrNewerDatabasesAreRejectedWithoutRebuild();
-        initializingV4AgainKeepsStableKeys();
+        initializingV5AgainKeepsStableKeys();
         failedV2MigrationRollsBackEverySchemaChange();
         System.out.println("SchemaMigrationTest: PASS");
     }

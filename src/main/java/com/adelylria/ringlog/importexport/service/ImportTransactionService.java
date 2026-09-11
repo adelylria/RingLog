@@ -326,8 +326,9 @@ public final class ImportTransactionService {
         Map<String, Long> result = new HashMap<>();
         for (NativeRow row : model.rows("places")) {
             Map<String, String> values = linkedValues();
-            copy(values, row, "stable_key", "name", "locality", "latitude", "longitude",
-                    "notes", "is_favorite", "is_default", "active", "created_at", "updated_at");
+            copy(values, row, "stable_key", "name", "locality", "autonomous_community",
+                    "country", "latitude", "longitude", "notes", "is_favorite",
+                    "is_default", "active", "created_at", "updated_at");
             insertOrVerify(anchor, "place", "stable_key = ?",
                     new String[]{row.value("stable_key")}, values);
             result.put(row.value("stable_key"),

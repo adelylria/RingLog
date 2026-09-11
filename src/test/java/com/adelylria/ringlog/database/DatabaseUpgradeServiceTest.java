@@ -20,7 +20,7 @@ public final class DatabaseUpgradeServiceTest {
     public static void fixtureV4ToV5ToV6RunsInOneTransaction() throws Exception {
         Path root = Files.createTempDirectory("ringlog-upgrade-chain-");
         try {
-            AppPaths paths = currentDatabase(root);
+            AppPaths paths = fixtureV4Database(root);
             DatabaseUpgradeService service = fixtureService(
                     new V4ToV5Migration(false),
                     new V5ToV6Migration(false)
@@ -47,7 +47,7 @@ public final class DatabaseUpgradeServiceTest {
     public static void failingSecondSqlStepRollsBackTheWholeChain() throws Exception {
         Path root = Files.createTempDirectory("ringlog-upgrade-rollback-");
         try {
-            AppPaths paths = currentDatabase(root);
+            AppPaths paths = fixtureV4Database(root);
             DatabaseUpgradeService service = fixtureService(
                     new V4ToV5Migration(false),
                     new V5ToV6Migration(true)
@@ -128,6 +128,15 @@ public final class DatabaseUpgradeServiceTest {
         AppPaths paths = AppPaths.forDataRoot(root.resolve("appdata"));
         Files.createDirectories(paths.databasePath().getParent());
         Database.initialize(paths.databasePath().toString());
+        return paths;
+    }
+
+    private static AppPaths fixtureV4Database(Path root) throws Exception {
+        AppPaths paths = currentDatabase(root);
+        try (Connection connection = Database.getConnection(paths.databasePath().toString());
+             Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA user_version = 4");
+        }
         return paths;
     }
 

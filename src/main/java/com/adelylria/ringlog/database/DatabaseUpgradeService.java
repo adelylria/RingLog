@@ -32,7 +32,8 @@ public final class DatabaseUpgradeService {
                 Database.SCHEMA_VERSION,
                 new SchemaMigrationRegistry(List.of(
                         new V2ToV3SchemaMigration(),
-                        new V3ToV4StorageMigration()
+                        new V3ToV4StorageMigration(),
+                        new V4ToV5PlaceRegionMigration()
                 )),
                 new SchemaBackupService(),
                 new DatabaseIntegrityValidator(),
@@ -82,7 +83,7 @@ public final class DatabaseUpgradeService {
             }
             return new Inspection(detected.pragmaVersion(), SchemaState.READY);
         }
-        if (logicalVersion == 2) {
+        if (logicalVersion == 2 || logicalVersion == 4) {
             return new Inspection(detected.pragmaVersion(), SchemaState.SQL_UPGRADE_REQUIRED);
         }
         throw new SQLException(
@@ -320,7 +321,7 @@ public final class DatabaseUpgradeService {
                     }
                 } catch (IllegalArgumentException invalid) {
                     throw new SQLException(
-                            "Schema v4 contiene una referencia de medios no gestionada en "
+                            "El schema gestionado contiene una referencia de medios no válida en "
                                     + table + '.',
                             invalid
                     );

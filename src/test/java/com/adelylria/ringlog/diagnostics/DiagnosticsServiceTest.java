@@ -28,7 +28,7 @@ public final class DiagnosticsServiceTest {
                     "Diagnostics must use the exact managed database path");
             require(snapshot.logFile().equals(logging.logFile()),
                     "Diagnostics must expose the configured log location");
-            require(snapshot.schemaVersion() == 4,
+            require(snapshot.schemaVersion() == 5,
                     "Diagnostics must report the actual database schema");
             require(!snapshot.javaVersion().isBlank() && !snapshot.operatingSystem().isBlank(),
                     "Runtime diagnostics must identify Java and the operating system");

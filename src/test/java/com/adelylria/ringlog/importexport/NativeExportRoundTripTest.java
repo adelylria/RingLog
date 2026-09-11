@@ -1,6 +1,8 @@
 package com.adelylria.ringlog.importexport;
 
 import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -13,6 +15,12 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 
 import com.adelylria.ringlog.database.Database;
 import com.adelylria.ringlog.importexport.nativeformat.ExportResult;
@@ -156,6 +164,17 @@ public final class NativeExportRoundTripTest {
             AppPaths paths = AppPaths.forDataRoot(root.resolve("empty-data"));
             Path database = paths.databasePath();
             Database.initialize(database.toString());
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("""
+                        INSERT INTO place(
+                            stable_key, name, locality, autonomous_community, country
+                        ) VALUES (
+                            '88888888-8888-4888-8888-888888888888',
+                            'Els Rafals', 'Pollença', 'Illes Balears', 'España'
+                        )
+                        """);
+            }
             ExportResult exported = new RingLogExporter(
                     database.toString(), new MediaPathResolver(paths)
             )
@@ -166,9 +185,82 @@ public final class NativeExportRoundTripTest {
             require(new WorkbookFormatDetector().detect(exported.file()).format()
                             == ImportFormat.RINGLOG_EXPORT_V1,
                     "The media-free workbook must remain a valid native profile");
+
+            AppPaths restoredPaths = AppPaths.forDataRoot(root.resolve("restored-data"));
+            try (ImportPlan plan = new ImportCoordinator().analyze(exported.file())) {
+                new ImportTransactionService(
+                        restoredPaths.databasePath().toString(), restoredPaths
+                ).execute(plan);
+            }
+            require(rows(restoredPaths.databasePath(), """
+                    SELECT stable_key || '|' || autonomous_community || '|' || country
+                    FROM place
+                    """).equals(Set.of(
+                            "88888888-8888-4888-8888-888888888888|Illes Balears|España"
+                    )), "Native export/import must preserve the place region and country");
+
+            Path legacyHeaderExport = withoutPlaceRegionColumns(
+                    exported.file(), root.resolve("ringlog-export-v1-schema4.xlsx")
+            );
+            AppPaths legacyRestore = AppPaths.forDataRoot(root.resolve("legacy-restore"));
+            try (ImportPlan plan = new ImportCoordinator().analyze(legacyHeaderExport)) {
+                require(plan.profile().format() == ImportFormat.RINGLOG_EXPORT_V1,
+                        "A previous schema-v4 RingLog Export v1 must remain recognized");
+                new ImportTransactionService(
+                        legacyRestore.databasePath().toString(), legacyRestore
+                ).execute(plan);
+            }
+            require(count(legacyRestore.databasePath(), "place") == 1,
+                    "A previous native export must still restore its places");
+            require(rows(legacyRestore.databasePath(), """
+                    SELECT COALESCE(autonomous_community, '<null>') || '|'
+                           || COALESCE(country, '<null>')
+                    FROM place
+                    """).equals(Set.of("<null>|<null>")),
+                    "Fields absent from an old export must restore safely as null");
         } finally {
             deleteDirectory(root);
         }
+    }
+
+    private static Path withoutPlaceRegionColumns(Path source, Path destination)
+            throws Exception {
+        try (InputStream input = Files.newInputStream(source);
+             Workbook workbook = WorkbookFactory.create(input)) {
+            Sheet places = workbook.getSheet("places");
+            for (int rowIndex = 0; rowIndex <= places.getLastRowNum(); rowIndex++) {
+                Row row = places.getRow(rowIndex);
+                if (row == null) {
+                    continue;
+                }
+                for (int target = 3; target <= 10; target++) {
+                    Cell sourceCell = row.getCell(target + 2);
+                    Cell targetCell = row.getCell(target);
+                    if (targetCell == null) {
+                        targetCell = row.createCell(target);
+                    }
+                    targetCell.setCellValue(sourceCell.getStringCellValue());
+                }
+                for (int column : new int[]{11, 12}) {
+                    Cell cell = row.getCell(column);
+                    if (cell != null) {
+                        row.removeCell(cell);
+                    }
+                }
+            }
+            Sheet metadata = workbook.getSheet("metadata");
+            for (int index = 1; index <= metadata.getLastRowNum(); index++) {
+                Row row = metadata.getRow(index);
+                if (row != null && "schema_version".equals(row.getCell(0).getStringCellValue())) {
+                    row.getCell(1).setCellValue("4");
+                    break;
+                }
+            }
+            try (OutputStream output = Files.newOutputStream(destination)) {
+                workbook.write(output);
+            }
+        }
+        return destination;
     }
 
     private static void addEventPhoto(Path database, AppPaths paths) throws Exception {

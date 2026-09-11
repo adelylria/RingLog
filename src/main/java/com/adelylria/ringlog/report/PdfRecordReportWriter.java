@@ -391,7 +391,7 @@ final class PdfRecordReportWriter {
         return List.of(
                 field("Sexo", RecordReportText.friendly(record.sexCode())),
                 field("Edad EURING", record.ageEuringCode()),
-                field("Estado", RecordReportText.friendly(record.status())),
+                field("Estado", RecordReportText.birdStatus(record.status())),
                 field("Estado vital", record.dead() ? "Fallecida" : "Viva"),
                 field("Condición", RecordReportText.friendly(record.birdCondition())),
                 field("Reproducción", RecordReportText.friendly(record.reproductiveStatus())),
@@ -407,7 +407,7 @@ final class PdfRecordReportWriter {
         return List.of(
                 field("Ala", RecordReportText.unit(record.wing(), "mm")),
                 field("P3", RecordReportText.unit(record.p3(), "mm")),
-                field("Torso", RecordReportText.unit(record.torso(), "mm")),
+                field("Tarso", RecordReportText.unit(record.torso(), "mm")),
                 field("Peso", RecordReportText.unit(record.weight(), "g")),
                 field("Grasa", RecordReportText.display(record.fatScore())),
                 field("Músculo", RecordReportText.display(record.muscleScore())),

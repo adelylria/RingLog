@@ -1,20 +1,22 @@
 package com.adelylria.ringlog.ui.panels;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Component;
-import java.awt.Dialog;
+import java.awt.Cursor;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Window;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingWorker;
 
 import com.adelylria.ringlog.model.input.SpeciesInput;
@@ -29,10 +31,19 @@ import com.adelylria.ringlog.ui.theme.UiKit;
 
 public class SpeciesPanel extends JPanel {
 
+    private static final String CATALOG_VIEW = "catalog";
+    private static final String EDITOR_VIEW = "editor";
+
     private final CatalogRepository catalogRepository;
     private final JPanel cards;
     private final boolean canManage;
+    private final List<JButton> editButtons = new ArrayList<>();
+    private final CardLayout viewLayout = new CardLayout();
+    private final JPanel views = new JPanel(viewLayout);
     private JButton newSpeciesButton;
+    private JButton currentSaveButton;
+    private JPanel currentEditor;
+    private boolean mutationActionsEnabled = true;
 
     public SpeciesPanel(CatalogRepository catalogRepository) {
         this(catalogRepository, true);
@@ -51,12 +62,19 @@ public class SpeciesPanel extends JPanel {
 
     private void initialize() {
         setLayout(new BorderLayout());
+        views.setOpaque(false);
+        views.add(createCatalogPage(), CATALOG_VIEW);
+        add(views, BorderLayout.CENTER);
+    }
+
+    private JPanel createCatalogPage() {
         JPanel page = UiKit.pagePanel();
         JButton action = null;
         if (canManage) {
             newSpeciesButton = UiKit.primaryButton("Nueva especie");
+            newSpeciesButton.setName("newSpeciesButton");
             newSpeciesButton.setIcon(new NavigationIcon(NavigationIcon.Kind.ADD));
-            newSpeciesButton.addActionListener(event -> openNewSpeciesDialog());
+            newSpeciesButton.addActionListener(event -> showEditor(null));
             action = newSpeciesButton;
         }
         page.add(new PageHeader(
@@ -67,65 +85,87 @@ public class SpeciesPanel extends JPanel {
         ), BorderLayout.NORTH);
 
         cards.setOpaque(false);
-        JScrollPane scroll = new JScrollPane(cards);
-        scroll.setBorder(javax.swing.BorderFactory.createEmptyBorder());
-        scroll.setViewportBorder(javax.swing.BorderFactory.createEmptyBorder());
-        scroll.setOpaque(false);
-        scroll.getViewport().setOpaque(false);
-        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        JScrollPane scroll = UiKit.scrollPane(cards);
         page.add(scroll, BorderLayout.CENTER);
-        add(page, BorderLayout.CENTER);
+        return page;
     }
 
     public void setMutationActionsEnabled(boolean enabled) {
+        mutationActionsEnabled = enabled;
         if (newSpeciesButton != null) {
             newSpeciesButton.setEnabled(enabled);
         }
+        if (currentSaveButton != null) {
+            currentSaveButton.setEnabled(enabled);
+        }
+        editButtons.forEach(button -> button.setEnabled(enabled));
     }
 
-    private void openNewSpeciesDialog() {
-        SpeciesForm form = new SpeciesForm();
-        JLabel status = UiKit.muted("El nombre científico es obligatorio.");
-        JButton saveButton = UiKit.primaryButton("Guardar especie");
-        JButton cancelButton = UiKit.secondaryButton("Cancelar");
-        JDialog dialog = createDialog("Nueva especie");
+    private void showEditor(SpeciesSummary species) {
+        if (!canManage || !mutationActionsEnabled) {
+            return;
+        }
+        if (currentEditor != null) {
+            views.remove(currentEditor);
+        }
+        currentEditor = createEditorPage(species);
+        views.add(currentEditor, EDITOR_VIEW);
+        viewLayout.show(views, EDITOR_VIEW);
+        views.revalidate();
+        views.repaint();
+    }
 
-        JPanel content = UiKit.sectionPanel();
-        content.add(form, BorderLayout.CENTER);
-        JPanel footer = new JPanel(new BorderLayout(12, 0));
+    private JPanel createEditorPage(SpeciesSummary species) {
+        boolean editing = species != null;
+        SpeciesForm form = editing ? new SpeciesForm(species) : new SpeciesForm();
+        form.setName("speciesEditorForm");
+        JLabel status = UiKit.muted("El nombre científico es obligatorio.");
+        JButton cancelButton = UiKit.secondaryButton("Cancelar");
+        cancelButton.setName("cancelSpeciesEditorButton");
+        cancelButton.addActionListener(event -> showCatalog());
+        currentSaveButton = UiKit.primaryButton(
+                editing ? "Guardar cambios" : "Guardar especie"
+        );
+        currentSaveButton.setName("saveSpeciesButton");
+        currentSaveButton.setEnabled(mutationActionsEnabled);
+
+        JPanel page = UiKit.pagePanel();
+        page.setName("speciesEditorView");
+        page.add(new PageHeader(
+                editing ? "EDITAR ESPECIE" : "NUEVA ESPECIE",
+                editing ? species.name() : "Añadir especie",
+                editing
+                        ? "Actualiza el catálogo sin perder las aves ni sus registros."
+                        : "Añádela al catálogo para utilizarla en nuevos registros.",
+                cancelButton
+        ), BorderLayout.NORTH);
+
+        JPanel formCard = UiKit.sectionPanel();
+        formCard.add(form, BorderLayout.CENTER);
+        JPanel formColumn = UiKit.verticalScrollPanel();
+        formColumn.add(formCard);
+        JScrollPane scroll = UiKit.scrollPane(formColumn);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        page.add(scroll, BorderLayout.CENTER);
+
+        JPanel footer = new JPanel(new BorderLayout(16, 0));
         footer.setOpaque(false);
         footer.add(status, BorderLayout.CENTER);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        actions.setOpaque(false);
-        actions.add(cancelButton);
-        actions.add(Box.createHorizontalStrut(8));
-        actions.add(saveButton);
-        footer.add(actions, BorderLayout.EAST);
-        content.add(footer, BorderLayout.SOUTH);
-        dialog.setContentPane(content);
-        dialog.getRootPane().setDefaultButton(saveButton);
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
+        footer.add(currentSaveButton, BorderLayout.EAST);
+        page.add(footer, BorderLayout.SOUTH);
 
-        cancelButton.addActionListener(event -> dialog.dispose());
-        saveButton.addActionListener(event -> saveSpecies(form, dialog, status, saveButton));
-        dialog.setVisible(true);
-    }
-
-    private JDialog createDialog(String title) {
-        Window owner = javax.swing.SwingUtilities.getWindowAncestor(this);
-        JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-        dialog.setResizable(false);
-        dialog.getRootPane().setBorder(javax.swing.BorderFactory.createEmptyBorder(18, 18, 18, 18));
-        return dialog;
+        JButton saveButton = currentSaveButton;
+        saveButton.addActionListener(event -> saveSpecies(
+                form, status, saveButton, editing ? species.id() : null
+        ));
+        return page;
     }
 
     private void saveSpecies(
             SpeciesForm form,
-            JDialog dialog,
             JLabel status,
-            JButton saveButton
+            JButton saveButton,
+            Long speciesId
     ) {
         final SpeciesInput input;
         try {
@@ -139,21 +179,23 @@ public class SpeciesPanel extends JPanel {
         new SwingWorker<Long, Void>() {
             @Override
             protected Long doInBackground() {
-                return catalogRepository.insertSpecies(input);
+                return speciesId == null
+                        ? catalogRepository.insertSpecies(input)
+                        : catalogRepository.updateSpecies(speciesId, input);
             }
 
             @Override
             protected void done() {
                 try {
                     get();
-                    dialog.dispose();
-                    refresh();
+                    showCatalog();
+                    refreshCards();
                 } catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
-                    saveButton.setEnabled(true);
+                    saveButton.setEnabled(mutationActionsEnabled);
                     status.setText("Se ha interrumpido el guardado.");
                 } catch (ExecutionException exception) {
-                    saveButton.setEnabled(true);
+                    saveButton.setEnabled(mutationActionsEnabled);
                     Throwable cause = exception.getCause();
                     status.setText(cause instanceof IllegalArgumentException
                             ? cause.getMessage()
@@ -164,6 +206,18 @@ public class SpeciesPanel extends JPanel {
     }
 
     public void refresh() {
+        showCatalog();
+        refreshCards();
+    }
+
+    private void showCatalog() {
+        viewLayout.show(views, CATALOG_VIEW);
+        currentSaveButton = null;
+        views.revalidate();
+        views.repaint();
+    }
+
+    private void refreshCards() {
         cards.removeAll();
         cards.add(UiKit.muted("Cargando especies…"));
         cards.revalidate();
@@ -179,7 +233,10 @@ public class SpeciesPanel extends JPanel {
             protected void done() {
                 try {
                     render(get());
-                } catch (InterruptedException | ExecutionException exception) {
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    render(List.of());
+                } catch (ExecutionException exception) {
                     render(List.of());
                 }
             }
@@ -188,33 +245,70 @@ public class SpeciesPanel extends JPanel {
 
     private void render(List<SpeciesSummary> species) {
         cards.removeAll();
+        editButtons.clear();
         if (species.isEmpty()) {
             cards.add(new EmptyStatePanel(
                     "Aún no hay especies",
-                    "Las especies aparecerán cuando exista un registro asociado.",
+                    "Añade una especie para utilizarla al crear tus registros.",
                     null
             ));
         } else {
             for (SpeciesSummary item : species) {
-                JPanel card = UiKit.sectionPanel();
-                JPanel copy = new JPanel();
-                copy.setOpaque(false);
-                copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
-                copy.add(UiKit.valueLabel(item.name()));
-                copy.add(Box.createVerticalStrut(4));
-                copy.add(UiKit.muted(item.eventCount() + " "
-                        + (item.eventCount() == 1 ? "registro" : "registros")));
-                card.add(copy, BorderLayout.CENTER);
-                JPanel badge = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-                badge.setOpaque(false);
-                JLabel count = UiKit.chip(Long.toString(item.eventCount()));
-                badge.add(count);
-                card.add(badge, BorderLayout.EAST);
-                card.setAlignmentX(Component.LEFT_ALIGNMENT);
-                cards.add(card);
+                cards.add(speciesCard(item));
             }
         }
         cards.revalidate();
         cards.repaint();
+    }
+
+    private JPanel speciesCard(SpeciesSummary item) {
+        JPanel card = UiKit.sectionPanel();
+        JPanel copy = new JPanel();
+        copy.setOpaque(false);
+        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+        copy.add(UiKit.valueLabel(item.name()));
+        if (item.commonName() != null && !item.commonName().isBlank()
+                && item.scientificName() != null && !item.scientificName().isBlank()) {
+            copy.add(Box.createVerticalStrut(3));
+            copy.add(UiKit.muted(item.scientificName()));
+        }
+        if (item.code() != null && !item.code().isBlank()) {
+            copy.add(Box.createVerticalStrut(3));
+            copy.add(UiKit.eyebrow(item.code()));
+        }
+        copy.add(Box.createVerticalStrut(5));
+        copy.add(UiKit.muted(item.eventCount() + " "
+                + (item.eventCount() == 1 ? "registro" : "registros")));
+        card.add(copy, BorderLayout.CENTER);
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        actions.setOpaque(false);
+        actions.add(UiKit.chip(Long.toString(item.eventCount())));
+        if (canManage) {
+            JButton edit = editButton("Editar " + item.name());
+            edit.setName("editSpecies-" + item.id());
+            edit.setEnabled(mutationActionsEnabled);
+            edit.addActionListener(event -> showEditor(item));
+            editButtons.add(edit);
+            actions.add(edit);
+        }
+        card.add(actions, BorderLayout.EAST);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return card;
+    }
+
+    private static JButton editButton(String accessibleName) {
+        JButton button = new JButton(new NavigationIcon(NavigationIcon.Kind.EDIT));
+        button.setToolTipText(accessibleName);
+        button.getAccessibleContext().setAccessibleName(accessibleName);
+        button.putClientProperty("JButton.buttonType", "toolBarButton");
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setOpaque(false);
+        button.setForeground(UiKit.accentColor());
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(32, 32));
+        return button;
     }
 }

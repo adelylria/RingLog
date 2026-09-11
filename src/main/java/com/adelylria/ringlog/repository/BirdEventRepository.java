@@ -692,7 +692,7 @@ public class BirdEventRepository {
         }
         validateMeasurement(input.wing(), "ala");
         validateMeasurement(input.p3(), "P3");
-        validateMeasurement(input.torso(), "torso");
+        validateMeasurement(input.torso(), "tarso");
         validateMeasurement(input.weight(), "peso");
     }
 

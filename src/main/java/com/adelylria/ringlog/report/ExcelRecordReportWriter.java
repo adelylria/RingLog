@@ -67,7 +67,7 @@ final class ExcelRecordReportWriter {
             "Clasificación histórica",
             "Ala (mm)",
             "P3 (mm)",
-            "Torso (mm)",
+            "Tarso (mm)",
             "Peso (g)",
             "Grasa",
             "Músculo",
@@ -372,7 +372,7 @@ final class ExcelRecordReportWriter {
         writeCoordinate(row, column++, record.longitude(), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.sexCode()), alternate, styles);
         writeText(row, column++, record.ageEuringCode(), alternate, styles);
-        writeText(row, column++, RecordReportText.coded(record.status()), alternate, styles);
+        writeText(row, column++, RecordReportText.birdStatus(record.status()), alternate, styles);
         writeText(row, column++, record.dead() ? "Fallecida" : "Viva", alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.birdCondition()), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.reproductiveStatus()), alternate, styles);

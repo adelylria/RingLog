@@ -35,7 +35,7 @@ import com.adelylria.ringlog.storage.AppPaths;
 
 public final class Database {
 
-    public static final int SCHEMA_VERSION = 4;
+    public static final int SCHEMA_VERSION = 5;
 
     private static final String SCHEMA_RESOURCE = "/database/schema.sql";
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
@@ -44,8 +44,8 @@ public final class Database {
             Map.entry("bird", Set.of("id", "stable_key", "ring_number", "species_id",
                     "created_at", "updated_at")),
             Map.entry("place", Set.of("id", "stable_key", "name", "locality", "latitude",
-                    "longitude", "notes", "is_favorite", "is_default", "active",
-                    "created_at", "updated_at")),
+                    "longitude", "autonomous_community", "country", "notes", "is_favorite",
+                    "is_default", "active", "created_at", "updated_at")),
             Map.entry("bird_event", Set.of("id", "stable_key", "migration_key", "bird_id",
                     "event_type", "event_date", "event_time", "place_id", "location_text",
                     "sex_code", "age_euring_code", "fat_score", "muscle_score",
