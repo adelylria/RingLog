@@ -8,7 +8,7 @@
 
     <groupId>com.adelylria.ringlog</groupId>
     <artifactId>RingLog</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
     <name>RingLog</name>
 
     <properties>
