@@ -371,8 +371,17 @@ public final class BirdEventRepositoryTest {
                     "Ring lookup should ignore case");
             require(bird.eventCount() == 3,
                     "The imported bird should expose its three historical events");
-            require(repository.findEventsByBird(bird.id()).size() == 3,
+            List<BirdEventTimelineItem> history = repository.findEventsByBird(bird.id());
+            require(history.size() == 3,
                     "Bird history should return all events for the same bird");
+            require(history.stream().allMatch(event -> event.historyEventTypes().equals(
+                            List.of(
+                                    EventType.RINGING,
+                                    EventType.CONTROL,
+                                    EventType.RECOVERY
+                            )
+                    )),
+                    "Every preview should carry the bird's complete ordered journey");
         } finally {
             Files.deleteIfExists(copy);
         }

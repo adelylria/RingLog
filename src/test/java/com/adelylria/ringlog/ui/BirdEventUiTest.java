@@ -15,6 +15,7 @@ import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
@@ -74,6 +75,56 @@ public final class BirdEventUiTest {
 
         require(labels.contains("Control"),
                 "Each diary card should identify its event type");
+        require(labels.stream().noneMatch(label -> label.startsWith("Historia de la anilla")),
+                "A single event should not add a redundant journey summary");
+    }
+
+    public static void diaryCardShowsTheWholeJourneyWithoutReplacingCurrentType() {
+        BirdEventCard card = new BirdEventCard(
+                new BirdEventTimelineItem(
+                        1L,
+                        2L,
+                        "V25943",
+                        EventType.RECOVERY,
+                        "2026-03-01",
+                        "17:25:00",
+                        "TURDUS PHILOMELOS",
+                        "Mallorca",
+                        "Recuperación de prueba",
+                        null,
+                        null,
+                        "OK",
+                        List.of(
+                                EventType.RINGING,
+                                EventType.CONTROL,
+                                EventType.RECOVERY
+                        )
+                ),
+                ignored -> { }
+        );
+        List<String> labels = descendants(card, JLabel.class).stream()
+                .map(JLabel::getText)
+                .toList();
+
+        require(labels.contains("Recuperación"),
+                "The card's own event type must remain the primary state");
+        require(labels.containsAll(List.of("Anillamiento", "Control", "Recuperación")),
+                "The preview should expose every phase as a visible chip");
+        List<JLabel> journeyChips = descendants(card, JLabel.class).stream()
+                .filter(label -> label.getName() != null
+                        && label.getName().startsWith("birdJourney-"))
+                .toList();
+        require(journeyChips.size() == 3,
+                "The ring's three phases should each have their own chip");
+        require(journeyChips.stream()
+                        .map(JLabel::getForeground)
+                        .distinct()
+                        .count() == 1
+                        && journeyChips.stream()
+                        .map(Object::getClass)
+                        .distinct()
+                        .count() == 1,
+                "Every recorded phase should use the same quiet chip treatment");
     }
 
     public static void diaryCardUsesNaturalEmptyCopy() {
@@ -355,6 +406,51 @@ public final class BirdEventUiTest {
                 "An empty calendar day should be explained as a filter result");
     }
 
+    public static void exactRingSearchSeparatesItsHistoryFromNoteMentions()
+            throws Exception {
+        List<BirdEventTimelineItem> events = List.of(
+                timelineEvent(
+                        3L, 8L, "V33923", EventType.RINGING,
+                        "2025-02-01", "Una jornada compartida con la anilla V33924"
+                ),
+                timelineEvent(
+                        2L, 7L, "V33924", EventType.RECOVERY,
+                        "2025-01-12", "Recuperación comunicada"
+                ),
+                timelineEvent(
+                        1L, 7L, "V33924", EventType.RINGING,
+                        "2024-12-28", "Anillamiento inicial"
+                )
+        );
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override
+            public List<BirdEventTimelineItem> findTimeline() {
+                return events;
+            }
+        };
+        CaptureListPanel panel = onEdt(() -> new CaptureListPanel(
+                repository, ignored -> { }, () -> { }
+        ));
+        SwingUtilities.invokeAndWait(panel::refresh);
+        waitForCardCount(panel, 3);
+
+        JTextField search = onEdt(() -> descendants(panel, JTextField.class).get(0));
+        SwingUtilities.invokeAndWait(() -> search.setText("V33924"));
+        waitForLabel(panel, "2 registros de V33924 · 1 mención en notas");
+
+        List<BirdEventCard> cards = onEdt(() -> descendants(
+                panel, BirdEventCard.class
+        ));
+        require(cards.size() == 3,
+                "Searching a ring should retain related note mentions");
+        require(cards.get(0).getAccessibleContext().getAccessibleName().endsWith(" · V33924")
+                        && cards.get(1).getAccessibleContext().getAccessibleName()
+                        .endsWith(" · V33924")
+                        && cards.get(2).getAccessibleContext().getAccessibleName()
+                        .endsWith(" · V33923"),
+                "Exact ring records should appear before incidental note mentions");
+    }
+
     public static void detailShowsEveryFieldAndOffersIntegratedEditing() throws Exception {
         String longNotes = "1 de 5. Capturas: Cinco zorzales comunes anillados. "
                 + "(V33907, V33908, V33909, V33910, V33911) Aranzadi-Sansebastián. "
@@ -402,6 +498,14 @@ public final class BirdEventUiTest {
             public Optional<BirdEventDetail> findDetail(long eventId) {
                 return Optional.of(detail);
             }
+
+            @Override
+            public List<BirdEventTimelineItem> findEventsByBird(long birdId) {
+                return List.of(timelineEvent(
+                        detail.id(), detail.birdId(), detail.ringNumber(),
+                        detail.eventType(), detail.eventDate(), detail.observations()
+                ));
+            }
         };
         AtomicReference<BirdEventDetail> editRequest = new AtomicReference<>();
         CaptureDetailPanel panel = onEdt(() -> new CaptureDetailPanel(
@@ -410,7 +514,7 @@ public final class BirdEventUiTest {
                 editRequest::set
         ));
         SwingUtilities.invokeAndWait(() -> panel.setEventId(1L));
-        waitForLabel(panel, "Anilla V25943");
+        waitForLabel(panel, "Anilla V25943 · 1 registro");
 
         List<JLabel> labels = onEdt(() -> descendants(panel, JLabel.class));
         require(labels.stream().noneMatch(label ->
@@ -488,12 +592,117 @@ public final class BirdEventUiTest {
                 "The notes block should grow vertically instead of clipping long text");
 
         JButton edit = onEdt(() -> descendants(panel, JButton.class).stream()
-                .filter(button -> "Editar entrada".equals(button.getText()))
+                .filter(button -> "Editar este registro".equals(button.getText()))
                 .findFirst()
                 .orElseThrow());
         SwingUtilities.invokeAndWait(edit::doClick);
         require(editRequest.get() == detail,
                 "Editing must stay inside RingLog and reuse the loaded entry");
+    }
+
+    public static void detailConnectsAndNavigatesEveryEventOfTheSameBird()
+            throws Exception {
+        BirdEventDetail ringing = historyDetail(
+                41L, EventType.RINGING, "2024-12-28", "ELS RAFALS"
+        );
+        BirdEventDetail recovery = historyDetail(
+                42L, EventType.RECOVERY, "2025-01-12", "AL SUR DE FRANCIA"
+        );
+        List<BirdEventTimelineItem> history = List.of(
+                timelineEvent(
+                        recovery.id(), recovery.birdId(), recovery.ringNumber(),
+                        recovery.eventType(), recovery.eventDate(), recovery.observations()
+                ),
+                timelineEvent(
+                        ringing.id(), ringing.birdId(), ringing.ringNumber(),
+                        ringing.eventType(), ringing.eventDate(), ringing.observations()
+                )
+        );
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override
+            public Optional<BirdEventDetail> findDetail(long eventId) {
+                return Optional.of(eventId == recovery.id() ? recovery : ringing);
+            }
+
+            @Override
+            public List<BirdEventTimelineItem> findEventsByBird(long birdId) {
+                require(birdId == ringing.birdId(),
+                        "History must be loaded by stable bird identity, not note text");
+                return history;
+            }
+        };
+        AtomicReference<BirdEventDetail> editRequest = new AtomicReference<>();
+        CaptureDetailPanel panel = onEdt(() -> new CaptureDetailPanel(
+                repository, () -> { }, editRequest::set
+        ));
+
+        SwingUtilities.invokeAndWait(() -> panel.setEventId(ringing.id()));
+        waitForLabel(panel, "Anilla V33924 · 2 registros");
+        waitForLabel(panel, "Anillamiento · 28 dic 2024");
+        List<JButton> historyButtons = onEdt(() -> descendants(
+                panel, JButton.class
+        ).stream().filter(button -> button.getName() != null
+                && button.getName().startsWith("historyEvent-")).toList());
+        require(historyButtons.size() == 2
+                        && "historyEvent-41".equals(historyButtons.get(0).getName())
+                        && "historyEvent-42".equals(historyButtons.get(1).getName()),
+                "The bird story must be chronological even if the repository is newest-first");
+        require(Boolean.TRUE.equals(historyButtons.get(0).getClientProperty(
+                        "RingLog.historySelected")),
+                "The opened event should be visibly selected in its history");
+
+        JScrollPane detailScroll = onEdt(() -> descendants(
+                panel, JScrollPane.class
+        ).stream().filter(scroll -> "captureDetailScroll".equals(scroll.getName()))
+                .findFirst()
+                .orElseThrow());
+        SwingUtilities.invokeAndWait(() -> detailScroll.getVerticalScrollBar()
+                .getModel().setRangeProperties(320, 120, 0, 1_000, false));
+        require(onEdt(() -> detailScroll.getVerticalScrollBar().getValue()) > 0,
+                "The test must begin with the detail scrolled away from its header");
+
+        JButton recoveryButton = historyButtons.get(1);
+        SwingUtilities.invokeAndWait(recoveryButton::doClick);
+        waitForLabel(panel, "Recuperación · 12 ene 2025");
+        waitForScrollTop(detailScroll);
+        JButton edit = onEdt(() -> descendants(panel, JButton.class).stream()
+                .filter(button -> "Editar este registro".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+        SwingUtilities.invokeAndWait(edit::doClick);
+        require(editRequest.get() == recovery,
+                "Each moment in the history must remain independently editable");
+    }
+
+    private static BirdEventTimelineItem timelineEvent(
+            long id,
+            long birdId,
+            String ringNumber,
+            EventType type,
+            String date,
+            String observations
+    ) {
+        return new BirdEventTimelineItem(
+                id, birdId, ringNumber, type, date, "17:35:00",
+                "TURDUS PHILOMELOS", "ELS RAFALS", observations,
+                null, null
+        );
+    }
+
+    private static BirdEventDetail historyDetail(
+            long id,
+            EventType type,
+            String date,
+            String place
+    ) {
+        return new BirdEventDetail(
+                id, 7L, "V33924", "TURDUS PHILOMELOS", type,
+                date, "17:35:00", place, null, null, null,
+                "U", "4", null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
+                null, null, null, null, null,
+                "Historia de la anilla", false, List.of()
+        );
     }
 
     private static CaptureListPanel populatedDiary() throws Exception {
@@ -605,6 +814,23 @@ public final class BirdEventUiTest {
         throw new AssertionError("Missing label: " + expected);
     }
 
+    private static void waitForScrollTop(JScrollPane scrollPane) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        do {
+            boolean atTop = onEdt(() ->
+                    scrollPane.getVerticalScrollBar().getValue() == 0
+                            && scrollPane.getViewport().getViewPosition().y == 0
+            );
+            if (atTop) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError(
+                "Switching history events should return the detail to its header"
+        );
+    }
+
     private static <T> T onEdt(Supplier<T> action) throws Exception {
         if (SwingUtilities.isEventDispatchThread()) {
             return action.get();
@@ -658,6 +884,7 @@ public final class BirdEventUiTest {
     public static void main(String[] args) throws Exception {
         sidebarUsesNaturalEventLanguage();
         diaryCardMakesTheEventTypeVisible();
+        diaryCardShowsTheWholeJourneyWithoutReplacingCurrentType();
         diaryCardUsesNaturalEmptyCopy();
         eventFormUsesSchemaFieldsInsteadOfEventCoordinates();
         emptyDiaryOffersANewRecord();
@@ -668,7 +895,9 @@ public final class BirdEventUiTest {
         archiveCanOrderRecordsByDateInBothDirections();
         exportUsesEveryFilteredRecordNotOnlyVisibleCards();
         calendarExplainsDaysWithoutMatchingEntries();
+        exactRingSearchSeparatesItsHistoryFromNoteMentions();
         detailShowsEveryFieldAndOffersIntegratedEditing();
+        detailConnectsAndNavigatesEveryEventOfTheSameBird();
         System.out.println("BirdEventUiTest: PASS");
     }
 }

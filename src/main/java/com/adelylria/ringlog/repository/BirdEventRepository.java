@@ -29,6 +29,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,6 +52,11 @@ public class BirdEventRepository {
                 e.observations,
                 e.bird_condition,
                 e.review_status,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT history.event_type)
+                    FROM bird_event history
+                    WHERE history.bird_id = e.bird_id
+                ) AS history_event_types,
                 (
                     SELECT ep.file_path
                     FROM event_photo ep
@@ -578,26 +584,51 @@ public class BirdEventRepository {
                 return OrmQuery.list(
                         dao,
                         sql,
-                        result -> new BirdEventTimelineItem(
-                                getLong(result, "id"),
-                                getLong(result, "bird_id"),
-                                getString(result, "ring_number"),
-                                EventType.fromDatabase(getString(result, "event_type")),
-                                getString(result, "event_date"),
-                                getString(result, "event_time"),
-                                getString(result, "species"),
-                                getString(result, "place"),
-                                getString(result, "observations"),
-                                getString(result, "bird_condition"),
-                                resolvedPhoto(getString(result, "photo_path")),
-                                getString(result, "review_status")
-                        ),
+                        result -> {
+                            EventType eventType = EventType.fromDatabase(
+                                    getString(result, "event_type")
+                            );
+                            return new BirdEventTimelineItem(
+                                    getLong(result, "id"),
+                                    getLong(result, "bird_id"),
+                                    getString(result, "ring_number"),
+                                    eventType,
+                                    getString(result, "event_date"),
+                                    getString(result, "event_time"),
+                                    getString(result, "species"),
+                                    getString(result, "place"),
+                                    getString(result, "observations"),
+                                    getString(result, "bird_condition"),
+                                    resolvedPhoto(getString(result, "photo_path")),
+                                    getString(result, "review_status"),
+                                    parseHistoryEventTypes(
+                                            getString(result, "history_event_types"),
+                                            eventType
+                                    )
+                            );
+                        },
                         arguments.toArray(String[]::new)
                 );
             });
         } catch (SQLException exception) {
             throw databaseError("Error cargando los eventos", exception);
         }
+    }
+
+    private static List<EventType> parseHistoryEventTypes(
+            String databaseValues,
+            EventType fallback
+    ) {
+        if (databaseValues == null || databaseValues.isBlank()) {
+            return List.of(fallback);
+        }
+        List<String> values = Arrays.stream(databaseValues.split(","))
+                .map(value -> value.trim().toUpperCase(Locale.ROOT))
+                .toList();
+        List<EventType> ordered = Arrays.stream(EventType.values())
+                .filter(type -> values.contains(type.databaseValue()))
+                .toList();
+        return ordered.isEmpty() ? List.of(fallback) : ordered;
     }
 
     private long resolveBirdId(Dao<BirdEntity, Long> dao, BirdEventInput input)

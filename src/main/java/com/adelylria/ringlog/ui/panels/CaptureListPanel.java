@@ -149,6 +149,7 @@ public class CaptureListPanel extends JPanel {
         }
         this.timelineView = new TimelineView();
         this.statusLabel = UiKit.muted("Cargando…");
+        this.statusLabel.setName("recordFilterStatus");
         this.showMoreButton = UiKit.secondaryButton("Mostrar más");
         this.showMoreButton.setVisible(false);
         this.showMoreButton.addActionListener(event -> {
@@ -663,10 +664,13 @@ public class CaptureListPanel extends JPanel {
             timelineView.setItems(filtered, onOpenEvent, visibleLimit);
         }
         int shown = Math.min(filtered.size(), visibleLimit);
-        statusLabel.setText(shown == filtered.size()
-                ? filtered.size() + " "
-                        + (filtered.size() == 1 ? "entrada" : "entradas")
-                : "Mostrando " + shown + " de " + filtered.size());
+        ExactRingSearch exactRing = exactRingSearch(filtered);
+        statusLabel.setText(shown == filtered.size() && exactRing != null
+                ? exactRing.description()
+                : shown == filtered.size()
+                        ? filtered.size() + " "
+                                + (filtered.size() == 1 ? "entrada" : "entradas")
+                        : "Mostrando " + shown + " de " + filtered.size());
 
         int remaining = Math.max(0, filtered.size() - visibleLimit);
         showMoreButton.setVisible(remaining > 0);
@@ -702,7 +706,7 @@ public class CaptureListPanel extends JPanel {
         String selectedSpecies = species;
         String selectedPlace = place;
         String selectedDateMode = dateMode;
-        return events.stream()
+        List<BirdEventTimelineItem> matches = events.stream()
                 .filter(item -> selectedSpecies.equals(ALL_SPECIES)
                         || selectedSpecies.equals(item.species()))
                 .filter(item -> selectedPlace.equals(ALL_PLACES)
@@ -717,6 +721,16 @@ public class CaptureListPanel extends JPanel {
                 .filter(item -> query.isBlank() || contains(item, query))
                 .sorted(dateComparator())
                 .toList();
+        if (query.isBlank() || matches.stream().noneMatch(
+                item -> exactRing(item, query)
+        )) {
+            return matches;
+        }
+
+        List<BirdEventTimelineItem> prioritized = new ArrayList<>(matches.size());
+        matches.stream().filter(item -> exactRing(item, query)).forEach(prioritized::add);
+        matches.stream().filter(item -> !exactRing(item, query)).forEach(prioritized::add);
+        return List.copyOf(prioritized);
     }
 
     private Comparator<BirdEventTimelineItem> dateComparator() {
@@ -745,6 +759,39 @@ public class CaptureListPanel extends JPanel {
                 .contains(query);
     }
 
+    private ExactRingSearch exactRingSearch(List<BirdEventTimelineItem> matches) {
+        String query = searchField.getText().trim().toLowerCase(Locale.ROOT);
+        if (query.isBlank()) {
+            return null;
+        }
+        List<BirdEventTimelineItem> exact = matches.stream()
+                .filter(item -> exactRing(item, query))
+                .toList();
+        if (exact.isEmpty()) {
+            return null;
+        }
+        long noteMentions = matches.stream()
+                .filter(item -> !exactRing(item, query))
+                .filter(item -> containsText(item.observations(), query))
+                .count();
+        int additional = matches.size() - exact.size() - (int) noteMentions;
+        return new ExactRingSearch(
+                exact.get(0).ringNumber(),
+                exact.size(),
+                noteMentions,
+                additional
+        );
+    }
+
+    private static boolean exactRing(BirdEventTimelineItem item, String query) {
+        return item.ringNumber() != null
+                && item.ringNumber().trim().equalsIgnoreCase(query);
+    }
+
+    private static boolean containsText(String value, String query) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(query);
+    }
+
     private Set<LocalDate> availableEventDates() {
         Set<LocalDate> dates = new HashSet<>();
         for (BirdEventTimelineItem item : events) {
@@ -758,6 +805,35 @@ public class CaptureListPanel extends JPanel {
             }
         }
         return dates;
+    }
+
+    private record ExactRingSearch(
+            String ringNumber,
+            int eventCount,
+            long noteMentions,
+            int additionalMatches
+    ) {
+        private String description() {
+            StringBuilder text = new StringBuilder()
+                    .append(eventCount)
+                    .append(eventCount == 1 ? " registro de " : " registros de ")
+                    .append(ringNumber);
+            if (noteMentions > 0) {
+                text.append(" · ")
+                        .append(noteMentions)
+                        .append(noteMentions == 1
+                                ? " mención en notas"
+                                : " menciones en notas");
+            }
+            if (additionalMatches > 0) {
+                text.append(" · ")
+                        .append(additionalMatches)
+                        .append(additionalMatches == 1
+                                ? " coincidencia adicional"
+                                : " coincidencias adicionales");
+            }
+            return text.toString();
+        }
     }
 
     private DateFilterOption selectedDatePeriod(String mode) {

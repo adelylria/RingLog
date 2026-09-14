@@ -4,9 +4,12 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Font;
 import java.awt.FlowLayout;
+import java.awt.Point;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
@@ -19,11 +22,14 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 
 import com.adelylria.ringlog.model.view.BirdEventDetail;
+import com.adelylria.ringlog.model.view.BirdEventTimelineItem;
 import com.adelylria.ringlog.model.BirdStatusCatalog;
 import com.adelylria.ringlog.repository.BirdEventRepository;
+import com.adelylria.ringlog.ui.components.BirdHistoryPanel;
 import com.adelylria.ringlog.ui.components.DetailSection;
 import com.adelylria.ringlog.ui.components.EmptyStatePanel;
 import com.adelylria.ringlog.ui.components.LocationMapPanel;
@@ -38,6 +44,8 @@ public class CaptureDetailPanel extends JPanel {
     private final boolean canEdit;
     private final Path mapCacheDirectory;
     private final JPanel content;
+    private final JScrollPane scrollPane;
+    private long loadGeneration;
 
     public CaptureDetailPanel(
             BirdEventRepository eventRepository,
@@ -76,6 +84,7 @@ public class CaptureDetailPanel extends JPanel {
         this.canEdit = canEdit;
         this.mapCacheDirectory = mapCacheDirectory.toAbsolutePath().normalize();
         this.content = UiKit.verticalScrollPanel();
+        this.scrollPane = UiKit.scrollPane(content);
         initialize();
     }
 
@@ -84,74 +93,104 @@ public class CaptureDetailPanel extends JPanel {
 
         content.setBorder(new javax.swing.border.EmptyBorder(34, 38, 34, 38));
 
-        JScrollPane scroll = UiKit.scrollPane(content);
-        scroll.setHorizontalScrollBarPolicy(
+        scrollPane.setName("captureDetailScroll");
+        scrollPane.setHorizontalScrollBarPolicy(
                 javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         );
-        add(scroll, BorderLayout.CENTER);
+        add(scrollPane, BorderLayout.CENTER);
     }
 
     public void setEventId(long eventId) {
+        long requestedGeneration = ++loadGeneration;
+        scrollToTop();
         content.removeAll();
-        content.add(new JLabel("Cargando la entrada…"));
+        content.add(new JLabel("Cargando la historia de la anilla…"));
         content.revalidate();
         content.repaint();
+        scrollToTopAfterLayout();
 
-        new SwingWorker<BirdEventDetail, Void>() {
+        new SwingWorker<LoadedHistory, Void>() {
             @Override
-            protected BirdEventDetail doInBackground() {
-                return eventRepository.findDetail(eventId).orElse(null);
+            protected LoadedHistory doInBackground() {
+                BirdEventDetail detail = eventRepository.findDetail(eventId).orElse(null);
+                if (detail == null) {
+                    return new LoadedHistory(null, List.of());
+                }
+                return new LoadedHistory(
+                        detail,
+                        eventRepository.findEventsByBird(detail.birdId())
+                );
             }
 
             @Override
             protected void done() {
+                if (requestedGeneration != loadGeneration) {
+                    return;
+                }
                 try {
-                    BirdEventDetail detail = get();
-                    if (detail == null) {
+                    LoadedHistory loaded = get();
+                    if (loaded.detail() == null) {
                         renderMissing();
                     } else {
-                        render(detail);
+                        render(
+                                loaded.detail(),
+                                normalizedHistory(loaded.detail(), loaded.events())
+                        );
                     }
                 } catch (InterruptedException | ExecutionException exception) {
+                    if (exception instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
                     renderMissing();
                 }
             }
         }.execute();
     }
 
-    private void render(BirdEventDetail detail) {
+    private void render(
+            BirdEventDetail detail,
+            List<BirdEventTimelineItem> history
+    ) {
         content.removeAll();
 
-        JButton back = UiKit.secondaryButton("← Volver al diario");
+        JButton back = UiKit.secondaryButton("← Volver a registros");
         back.addActionListener(event -> onBack.run());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         actions.setOpaque(false);
         if (canEdit) {
-            JButton edit = UiKit.primaryButton("Editar entrada");
+            JButton edit = UiKit.primaryButton("Editar este registro");
+            edit.setName("editSelectedEvent");
             edit.addActionListener(event -> onEdit.accept(detail));
             actions.add(edit);
         }
         actions.add(back);
         content.add(new PageHeader(
-                "ENTRADA DE CAMPO",
+                "HISTORIA DEL AVE",
                 UiKit.display(detail.species()),
-                UiKit.date(detail.eventDate())
-                        + " · "
-                        + UiKit.time(detail.eventTime())
-                        + " · "
-                        + displayLocation(detail),
+                birdHistorySummary(detail, history.size()),
                 actions
         ));
         content.add(Box.createVerticalStrut(20));
+
+        BirdHistoryPanel historyPanel = new BirdHistoryPanel(
+                history,
+                detail.id(),
+                this::setEventId
+        );
+        content.add(historyPanel);
+        content.add(Box.createVerticalStrut(14));
 
         JPanel identity = UiKit.sectionPanel();
         JPanel identityCopy = new JPanel();
         identityCopy.setOpaque(false);
         identityCopy.setLayout(new BoxLayout(identityCopy, BoxLayout.Y_AXIS));
-        JLabel ring = new JLabel("Anilla " + UiKit.display(detail.ringNumber()));
-        ring.setFont(ring.getFont().deriveFont(Font.BOLD, 17f));
-        identityCopy.add(ring);
-        String eventSummary = detail.eventType().toString();
+        JLabel selectedEvent = new JLabel(
+                detail.eventType() + " · " + UiKit.date(detail.eventDate())
+        );
+        selectedEvent.setName("selectedEventTitle");
+        selectedEvent.setFont(selectedEvent.getFont().deriveFont(Font.BOLD, 17f));
+        identityCopy.add(selectedEvent);
+        String eventSummary = selectedMomentSummary(detail);
         if (hasText(detail.status())) {
             eventSummary += " · " + displayBirdStatus(detail.status());
         }
@@ -269,6 +308,7 @@ public class CaptureDetailPanel extends JPanel {
 
         content.revalidate();
         content.repaint();
+        scrollToTopAfterLayout();
     }
 
     private void addPhotoGallery(BirdEventDetail detail) {
@@ -322,7 +362,7 @@ public class CaptureDetailPanel extends JPanel {
 
     private void renderMissing() {
         content.removeAll();
-        JButton back = UiKit.secondaryButton("← Volver al diario");
+        JButton back = UiKit.secondaryButton("← Volver a registros");
         back.addActionListener(event -> onBack.run());
         content.add(new PageHeader(
                 "ENTRADA DE CAMPO",
@@ -338,6 +378,17 @@ public class CaptureDetailPanel extends JPanel {
         ));
         content.revalidate();
         content.repaint();
+        scrollToTopAfterLayout();
+    }
+
+    private void scrollToTopAfterLayout() {
+        scrollToTop();
+        SwingUtilities.invokeLater(this::scrollToTop);
+    }
+
+    private void scrollToTop() {
+        scrollPane.getViewport().setViewPosition(new Point(0, 0));
+        scrollPane.getVerticalScrollBar().setValue(0);
     }
 
     private static String withUnit(Object value, String unit) {
@@ -357,6 +408,54 @@ public class CaptureDetailPanel extends JPanel {
                     : detail.place() + " · " + detail.locality();
         }
         return UiKit.display(detail.locationText());
+    }
+
+    private static String birdHistorySummary(
+            BirdEventDetail detail,
+            int eventCount
+    ) {
+        return "Anilla " + UiKit.display(detail.ringNumber()) + " · "
+                + eventCount + " " + (eventCount == 1 ? "registro" : "registros");
+    }
+
+    private static String selectedMomentSummary(BirdEventDetail detail) {
+        String time = UiKit.time(detail.eventTime());
+        String location = displayLocation(detail);
+        if ("—".equals(time)) {
+            return location;
+        }
+        if ("—".equals(location)) {
+            return time;
+        }
+        return time + " · " + location;
+    }
+
+    private static List<BirdEventTimelineItem> normalizedHistory(
+            BirdEventDetail detail,
+            List<BirdEventTimelineItem> events
+    ) {
+        List<BirdEventTimelineItem> history = new ArrayList<>(events);
+        if (history.stream().noneMatch(event -> event.id() == detail.id())) {
+            history.add(timelineItem(detail));
+        }
+        return List.copyOf(history);
+    }
+
+    private static BirdEventTimelineItem timelineItem(BirdEventDetail detail) {
+        return new BirdEventTimelineItem(
+                detail.id(),
+                detail.birdId(),
+                detail.ringNumber(),
+                detail.eventType(),
+                detail.eventDate(),
+                detail.eventTime(),
+                detail.species(),
+                displayLocation(detail),
+                detail.observations(),
+                detail.birdCondition(),
+                detail.photoPaths().isEmpty() ? null : detail.photoPaths().get(0),
+                detail.reviewStatus()
+        );
     }
 
     private static String coordinates(Double latitude, Double longitude) {
@@ -396,5 +495,11 @@ public class CaptureDetailPanel extends JPanel {
 
     private static Path defaultMapCache() {
         return Path.of(System.getProperty("java.io.tmpdir"), "ringlog-map-cache");
+    }
+
+    private record LoadedHistory(
+            BirdEventDetail detail,
+            List<BirdEventTimelineItem> events
+    ) {
     }
 }

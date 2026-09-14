@@ -13,6 +13,7 @@ import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.function.Consumer;
 
 import javax.imageio.ImageIO;
@@ -22,6 +23,7 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 
+import com.adelylria.ringlog.model.EventType;
 import com.adelylria.ringlog.model.view.BirdEventTimelineItem;
 import com.adelylria.ringlog.ui.theme.SurfacePanel;
 import com.adelylria.ringlog.ui.theme.UiKit;
@@ -33,10 +35,16 @@ public class BirdEventCard extends SurfacePanel {
             Consumer<Long> onOpen
     ) {
         super(new BorderLayout(16, 0));
+        List<EventType> historyTypes = item.historyEventTypes().stream()
+                .distinct()
+                .toList();
+        boolean hasJourney = historyTypes.size() > 1;
+        String journey = hasJourney ? journeyText(historyTypes) : null;
         setBorder(UiKit.cardBorder());
         setMaximumSize(new Dimension(Integer.MAX_VALUE, 164));
         getAccessibleContext().setAccessibleName(
                 item.eventType() + " · " + item.species() + " · " + item.ringNumber()
+                        + (hasJourney ? " · " + journey : "")
         );
 
         JPanel text = new JPanel();
@@ -47,13 +55,17 @@ public class BirdEventCard extends SurfacePanel {
         metadata.setOpaque(false);
         metadata.setAlignmentX(Component.LEFT_ALIGNMENT);
         metadata.add(UiKit.chip(UiKit.time(item.eventTime())));
-        metadata.add(UiKit.chip(item.eventType().toString()));
+        metadata.add(UiKit.muted("Anilla " + UiKit.display(item.ringNumber())));
+        if (hasJourney) {
+            addJourneyChips(metadata, historyTypes);
+        } else {
+            metadata.add(UiKit.chip(item.eventType().toString()));
+        }
         if ("REVIEW".equalsIgnoreCase(item.reviewStatus())) {
             JLabel review = UiKit.chip("Revisar");
             review.setToolTipText("Este registro tiene datos pendientes de comprobar");
             metadata.add(review);
         }
-        metadata.add(UiKit.muted("Anilla " + UiKit.display(item.ringNumber())));
         text.add(metadata);
         text.add(javax.swing.Box.createVerticalStrut(8));
 
@@ -136,6 +148,28 @@ public class BirdEventCard extends SurfacePanel {
         }
         String text = UiKit.display(observations).replaceAll("\\s+", " ").trim();
         return text.length() > 118 ? text.substring(0, 115) + "…" : text;
+    }
+
+    private static String journeyText(List<EventType> historyTypes) {
+        return historyTypes.stream()
+                .map(EventType::toString)
+                .collect(java.util.stream.Collectors.joining(" → "));
+    }
+
+    private static void addJourneyChips(
+            JPanel metadata,
+            List<EventType> historyTypes
+    ) {
+        for (int index = 0; index < historyTypes.size(); index++) {
+            if (index > 0) {
+                metadata.add(UiKit.muted("→"));
+            }
+            EventType type = historyTypes.get(index);
+            JLabel chip = UiKit.chip(type.toString());
+            chip.setName("birdJourney-" + type.databaseValue());
+            chip.setToolTipText("Fase registrada: " + type);
+            metadata.add(chip);
+        }
     }
 
     private static boolean hasText(String value) {
