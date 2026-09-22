@@ -36,7 +36,7 @@ OutputBaseFilename=RingLog-Setup-{#RingLogArchitecture}
 UninstallDisplayName=RingLog
 UninstallDisplayIcon={app}\RingLog.ico
 SetupIconFile={#RingLogIconFile}
-CloseApplications=no
+CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
 UsePreviousTasks=yes
@@ -55,17 +55,13 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\runtime"
-Type: filesandordirs; Name: "{app}\libs"
-Type: files; Name: "{app}\RingLog.jar"
-Type: files; Name: "{app}\RingLog.ico"
-
 [Files]
 Source: "{#RingLogStageDir}\RingLog.jar"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RingLogStageDir}\distribution.properties"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#RingLogStageDir}\libs\*"; DestDir: "{app}\libs"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#RingLogStageDir}\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The pinned 0.0.1-0.0.3 dependencies may still be loaded when an older updater
+; passes /NOCLOSEAPPLICATIONS. Keep existing files and restore any missing ones.
+Source: "{#RingLogStageDir}\libs\*"; DestDir: "{app}\libs"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs
+Source: "{#RingLogStageDir}\runtime\*"; DestDir: "{app}\runtime"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs
 Source: "{#RingLogStageDir}\RingLog.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

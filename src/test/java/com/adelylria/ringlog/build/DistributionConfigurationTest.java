@@ -52,6 +52,14 @@ public final class DistributionConfigurationTest {
                 "Shortcuts must use only the bundled runtime and stable JAR");
         require(script.contains("RestartApplications=no"),
                 "Only RingLog's explicit [Run] entry may reopen the app");
+        require(script.contains("CloseApplications=yes"),
+                "Inno Restart Manager must close processes holding the bundled runtime");
+        require(!script.contains("[InstallDelete]"),
+                "An update must not delete the old runtime before its replacement is installed");
+        require(script.contains("Source: \"{#RingLogStageDir}\\runtime\\*\"; DestDir: \"{app}\\runtime\"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs"),
+                "Updates started by older RingLog versions must not replace loaded runtime DLLs");
+        require(script.contains("Source: \"{#RingLogStageDir}\\libs\\*\"; DestDir: \"{app}\\libs\"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs"),
+                "Updates started by older RingLog versions must not replace unchanged libraries");
         require(script.contains("MessagesFile: \"compiler:Languages\\Spanish.isl\""),
                 "Installer messages must match RingLog's Spanish UI");
         require(script.contains("SetupIconFile={#RingLogIconFile}"),

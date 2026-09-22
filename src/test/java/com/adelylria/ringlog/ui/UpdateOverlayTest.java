@@ -27,6 +27,9 @@ public final class UpdateOverlayTest {
                 "The comparison title must be clear");
         require(hasButton(overlay, "Actualizar ahora"), "Primary update action is missing");
         require(hasButton(overlay, "Más tarde"), "Postpone action is missing");
+        require(hasText(overlay,
+                "Guarda tus cambios y cierra otras ventanas de RingLog antes de actualizar."),
+                "The update must warn about unsaved work before closing applications");
     }
 
     private static boolean hasText(Component component, String text) {

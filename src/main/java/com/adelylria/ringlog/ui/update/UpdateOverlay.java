@@ -52,7 +52,7 @@ public final class UpdateOverlay extends JPanel {
         body.add(UiKit.valueLabel("Nueva versión · " + available));
         body.add(Box.createVerticalStrut(10));
         body.add(UiKit.muted(
-                "La descarga se verificará antes de cerrar RingLog. Tus datos no se modificarán."
+                "Guarda tus cambios y cierra otras ventanas de RingLog antes de actualizar."
         ));
         JButton install = UiKit.primaryButton("Actualizar ahora");
         install.addActionListener(event -> updateNow.run());

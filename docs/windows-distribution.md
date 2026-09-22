@@ -113,6 +113,13 @@ descarga valida HTTPS, tamaño y SHA-256. Si todo coincide, inicia el instalador
 pasa el PID actual, cierra RingLog ordenadamente y el instalador espera su salida antes de cambiar
 archivos. Después vuelve a abrir RingLog con el `javaw.exe` incluido.
 
+El lanzador nuevo permite a Inno usar Restart Manager para cerrar otros procesos que mantengan
+abiertos archivos de la instalación. Las versiones 0.0.1 y 0.0.2 pasan todavía
+`/NOCLOSEAPPLICATIONS`; por eso la 0.0.3 conserva las DLL y librerías ya instaladas, que son
+idénticas en esas versiones, y repone las que falten. El instalador no borra previamente
+`runtime/` ni `libs/`. Antes de actualizar desde una versión antigua hay que guardar los cambios
+y cerrar cualquier otra ventana de RingLog.
+
 Errores de red, releases incompletas, firma inválida, arquitectura ausente o hash incorrecto no
 bloquean RingLog ni modifican la instalación existente.
 

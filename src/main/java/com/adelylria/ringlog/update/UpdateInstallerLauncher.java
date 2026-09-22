@@ -19,7 +19,6 @@ public final class UpdateInstallerLauncher {
         return List.of(
                 normalized.toString(),
                 "/SILENT",
-                "/NOCLOSEAPPLICATIONS",
                 "/NORESTARTAPPLICATIONS",
                 "/NORESTART",
                 "/RINGLOGUPDATE=1",

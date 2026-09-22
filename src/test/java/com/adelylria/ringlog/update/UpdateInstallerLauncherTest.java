@@ -14,8 +14,8 @@ public final class UpdateInstallerLauncherTest {
         require(command.get(0).equals(setup.toAbsolutePath().normalize().toString()),
                 "The verified setup must be launched directly");
         require(command.contains("/SILENT"), "Update must use /SILENT");
-        require(command.contains("/NOCLOSEAPPLICATIONS"),
-                "Restart Manager must not terminate another RingLog instance");
+        require(!command.contains("/NOCLOSEAPPLICATIONS"),
+                "Inno must be allowed to close processes holding installed files");
         require(command.contains("/NORESTARTAPPLICATIONS"),
                 "Restart Manager must not create a second RingLog process");
         require(command.contains("/RINGLOGUPDATE=1"), "Inno must recognize an update handoff");
