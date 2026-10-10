@@ -182,7 +182,7 @@ public class SettingsPanel extends JPanel {
         JPanel card = UiKit.sectionPanel();
         card.add(UiKit.valueLabel(capabilities.readOnly()
                 ? "Esta copia portátil" : "Copias e importación"), BorderLayout.NORTH);
-        JPanel body = new JPanel(new BorderLayout(18, 0));
+        JPanel body = new JPanel(new BorderLayout(18, 12));
         body.setOpaque(false);
         JPanel copy = verticalCopy();
         copy.add(UiKit.valueLabel(capabilities.readOnly()
@@ -206,7 +206,7 @@ public class SettingsPanel extends JPanel {
         if (capabilities.importOrRestore()) {
             actions.add(importButton);
         }
-        body.add(actions, BorderLayout.EAST);
+        body.add(actions, BorderLayout.SOUTH);
         card.add(body, BorderLayout.CENTER);
 
         importButton.addActionListener(event -> startImportChooser());
@@ -217,7 +217,7 @@ public class SettingsPanel extends JPanel {
     private JPanel portableCard() {
         JPanel card = UiKit.sectionPanel();
         card.add(UiKit.valueLabel("Copia portátil"), BorderLayout.NORTH);
-        JPanel body = new JPanel(new BorderLayout(18, 0));
+        JPanel body = new JPanel(new BorderLayout(18, 12));
         body.setOpaque(false);
         JPanel copy = verticalCopy();
         copy.add(UiKit.valueLabel("Lleva tu diario en modo de solo lectura"));
@@ -229,7 +229,7 @@ public class SettingsPanel extends JPanel {
         JPanel action = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         action.setOpaque(false);
         action.add(portableButton);
-        body.add(action, BorderLayout.EAST);
+        body.add(action, BorderLayout.SOUTH);
         card.add(body, BorderLayout.CENTER);
         return card;
     }
@@ -239,7 +239,7 @@ public class SettingsPanel extends JPanel {
         JPanel card = UiKit.sectionPanel();
         card.add(UiKit.valueLabel("Acerca de RingLog"), BorderLayout.NORTH);
 
-        JPanel body = new JPanel(new BorderLayout(18, 0));
+        JPanel body = new JPanel(new BorderLayout(18, 12));
         body.setOpaque(false);
         JPanel copy = verticalCopy();
         copy.add(UiKit.valueLabel("RingLog " + diagnostics.applicationVersion()));
@@ -268,7 +268,7 @@ public class SettingsPanel extends JPanel {
             updates.addActionListener(event -> checkForUpdates.run());
             actions.add(updates);
         }
-        body.add(actions, BorderLayout.EAST);
+        body.add(actions, BorderLayout.SOUTH);
         card.add(body, BorderLayout.CENTER);
         return card;
     }

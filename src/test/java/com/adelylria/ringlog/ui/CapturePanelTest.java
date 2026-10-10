@@ -11,7 +11,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JList;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextField;
@@ -27,6 +31,7 @@ import com.adelylria.ringlog.repository.CatalogRepository;
 import com.adelylria.ringlog.ui.components.DateSelector;
 import com.adelylria.ringlog.ui.components.TimeSelector;
 import com.adelylria.ringlog.ui.panels.CapturePanel;
+import com.adelylria.ringlog.ui.theme.UiKit;
 
 public final class CapturePanelTest {
 
@@ -158,6 +163,13 @@ public final class CapturePanelTest {
                 () -> { }
         ));
         CapturePanel panel = holder[0];
+        SwingUtilities.invokeAndWait(() -> {
+            panel.edit(historicalDetail());
+            panel.prepareNew();
+            requireRequestedFieldLayout(panel);
+            require(findNamed(panel, "ageEuringCodeField", JTextField.class).getText().isEmpty(),
+                    "Starting a new entry must clear the previous age");
+        });
         JComboBox<?> species = findNamed(panel, "speciesField", JComboBox.class);
         JComboBox<?> status = findNamed(panel, "birdStatusField", JComboBox.class);
         waitFor(() -> species.getItemCount() == 1,
@@ -178,8 +190,16 @@ public final class CapturePanelTest {
         Object selectedStatus = injuredByRing;
         SwingUtilities.invokeAndWait(() -> {
             findNamed(panel, "ringNumberField", JTextField.class).setText("V12345");
+            findNamed(panel, "ageEuringCodeField", JTextField.class).setText("4");
             species.setSelectedIndex(0);
             status.setSelectedItem(selectedStatus);
+            JComboBox<?> condition = fieldLabeled(panel, "Condición general", JComboBox.class);
+            require(hasOption(condition, "Muerto"), "Muerto must be offered for new entries");
+            condition.setSelectedItem("Muerto");
+            require(selectedStatus.equals(status.getSelectedItem()),
+                    "Selecting Muerto must not alter the independently selected official status");
+            require(!find(panel, JCheckBox.class).isSelected(),
+                    "Selecting Muerto must not mark Ave fallecida automatically");
             findButton(panel, "Guardar evento").doClick();
         });
 
@@ -187,6 +207,12 @@ public final class CapturePanelTest {
                 "Saving the form should deliver the selected bird status");
         require(savedInput.get() != null && "F5".equals(savedInput.get().status()),
                 "Only the stable official code should be persisted");
+        require("DEAD".equals(savedInput.get().birdCondition()) && !savedInput.get().dead(),
+                "Condition must be saved independently of official status and vital state");
+        require("4".equals(savedInput.get().ageEuringCode()),
+                "Edad must still save the original EURING code field");
+        require(savedInput.get().ringerInitials() == null,
+                "A new entry must not inherit hidden initials from the previously edited event");
     }
 
     public static void editModeUsesTheFormAndKeepsHistoricalCatalogValues()
@@ -226,14 +252,7 @@ public final class CapturePanelTest {
                 () -> { }
         ));
         CapturePanel panel = holder[0];
-        BirdEventDetail detail = new BirdEventDetail(
-                31L, 11L, "V6494", "Petirrojo europeo", EventType.RECOVERY,
-                "2026-03-01", null, "Bosque antiguo", "Pollença", null,
-                "RECAPTURE", "F", "6", null, null, "AR", "PENDING",
-                null, null, null, null, null, null, null, null, 18.2,
-                null, null, null, null, 39.85, 2.98, "Nota original", false,
-                "REVIEW", "Pendiente de comprobar", List.of(), 91L, 92L
-        );
+        BirdEventDetail detail = historicalDetail();
         SwingUtilities.invokeAndWait(() -> panel.edit(detail));
 
         JComboBox<?> species = findNamed(panel, "speciesField", JComboBox.class);
@@ -252,6 +271,19 @@ public final class CapturePanelTest {
                 "Edit mode should preserve an unknown event time");
         require(findButton(panel, "Guardar cambios") != null,
                 "Edit mode should offer an explicit save-changes action");
+        SwingUtilities.invokeAndWait(() -> {
+            requireRequestedFieldLayout(panel);
+            JTextField age = findNamed(panel, "ageEuringCodeField", JTextField.class);
+            require("6".equals(age.getText()), "Edad must load the historical EURING value");
+            age.setText("5");
+            JComboBox<?> condition = fieldLabeled(panel, "Condición general", JComboBox.class);
+            require("Muerto".equals(condition.getSelectedItem()),
+                    "A saved DEAD condition must reopen as Muerto");
+            require("Muerto".equals(UiKit.friendlyCode("DEAD")),
+                    "The detail view should also use the human-readable condition");
+            require(!find(panel, JCheckBox.class).isSelected(),
+                    "Loading Muerto must not change the original vital state");
+        });
 
         JButton save = findButton(panel, "Guardar cambios");
         SwingUtilities.invokeAndWait(save::doClick);
@@ -263,6 +295,115 @@ public final class CapturePanelTest {
                         && "PENDING".equals(editedInput.get().status())
                         && editedInput.get().eventTime().isEmpty(),
                 "Saving should preserve coded and unknown values from the existing entry");
+        require("AR".equals(editedInput.get().ringerInitials()),
+                "Removing the initials control must not erase historical initials on save");
+        require("5".equals(editedInput.get().ageEuringCode()),
+                "The relocated Edad control must remain editable");
+        require("DEAD".equals(editedInput.get().birdCondition()) && !editedInput.get().dead(),
+                "Editing must preserve the condition independently of the vital state");
+    }
+
+    @SuppressWarnings("unchecked")
+    public static void placeSelectorShowsCoordinatesInOptionsAndSelection() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            CapturePanel panel = new CapturePanel();
+            JComboBox<PlaceSummary> places = (JComboBox<PlaceSummary>) findNamed(
+                    panel, "placeField", JComboBox.class);
+            JList<PlaceSummary> list = new JList<>();
+            PlaceSummary first = new PlaceSummary(1, "Lasarell", "Pollença",
+                    39.8475, 2.9780, null, false, false, 0);
+            PlaceSummary second = new PlaceSummary(2, "Lasarell", "Pollença",
+                    39.8971, 3.0298, null, false, false, 0);
+            for (int index : new int[] {-1, 0}) {
+                JLabel rendered = (JLabel) places.getRenderer().getListCellRendererComponent(
+                        list, first, index, true, false);
+                require("Lasarell · Pollença · 39.847500, 2.978000".equals(rendered.getText()),
+                        "Both the selected place and its dropdown option need coordinates");
+                rendered = (JLabel) places.getRenderer().getListCellRendererComponent(
+                        list, second, index, false, false);
+                require("Lasarell · Pollença · 39.897100, 3.029800".equals(rendered.getText()),
+                        "Same-named places must be distinguishable by their actual coordinates");
+            }
+            places.addItem(first);
+            places.setSelectedItem(first);
+            require(((PlaceSummary) places.getSelectedItem()).id() == 1L,
+                    "Rendering coordinates must not change the selected place identity");
+            require(places.getToolTipText().contains("39.847500, 2.978000"),
+                    "A narrow selector should expose its complete label as a tooltip");
+            for (PlaceSummary missing : List.of(
+                    new PlaceSummary(3, "Bosque", null, null, null, null, false, false, 0),
+                    new PlaceSummary(4, "Bosque", null, 39.85, null, null, false, false, 0),
+                    new PlaceSummary(5, "Bosque", null, null, 2.98, null, false, false, 0))) {
+                JLabel rendered = (JLabel) places.getRenderer().getListCellRendererComponent(
+                        list, missing, 0, false, false);
+                require("Bosque · Sin coordenadas".equals(rendered.getText()),
+                        "Incomplete coordinates must not be invented or rendered as null");
+            }
+            PlaceSummary zero = new PlaceSummary(6, "Costa", "", 0.0, -2.5,
+                    null, false, false, 0);
+            JLabel rendered = (JLabel) places.getRenderer().getListCellRendererComponent(
+                    list, zero, 0, false, false);
+            require("Costa · 0.000000, -2.500000".equals(rendered.getText()),
+                    "Zero and negative coordinates are valid, including places without locality");
+            rendered = (JLabel) places.getRenderer().getListCellRendererComponent(
+                    list, null, -1, false, false);
+            require(!rendered.getText().contains("coordenadas"),
+                    "An unselected place must not pretend to have location data");
+        });
+    }
+
+    private static BirdEventDetail historicalDetail() {
+        return new BirdEventDetail(
+                31L, 11L, "V6494", "Petirrojo europeo", EventType.RECOVERY,
+                "2026-03-01", null, "Bosque antiguo", "Pollença", null,
+                "RECAPTURE", "F", "6", null, null, "AR", "PENDING",
+                null, null, null, "DEAD", null, null, null, null, 18.2,
+                null, null, null, null, 39.85, 2.98, "Nota original", false,
+                "REVIEW", "Pendiente de comprobar", List.of(), 91L, 92L
+        );
+    }
+
+    private static void requireRequestedFieldLayout(CapturePanel panel) {
+        JTextField age = fieldLabeled(panel, "Edad", JTextField.class);
+        JTextField wing = fieldLabeled(panel, "Ala · mm", JTextField.class);
+        require(age != null && wing != null, "The form must show Edad next to the measurements");
+        JPanel measurements = findNamed(panel, "measurementsGrid", JPanel.class);
+        require(measurements != null && SwingUtilities.isDescendingFrom(age, measurements)
+                        && SwingUtilities.isDescendingFrom(wing, measurements),
+                "Edad and Ala must belong to the same measurement grid");
+        require(findLabel(panel, "Código de edad EURING") == null,
+                "The old age label must not remain in Datos de registro");
+        require(findLabel(panel, "Iniciales") == null && !containsTextField(panel, "AR"),
+                "Initials must no longer appear as an editable field");
+    }
+
+    private static boolean hasOption(JComboBox<?> combo, String label) {
+        for (int index = 0; index < combo.getItemCount(); index++) {
+            if (label.equals(combo.getItemAt(index))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static <T extends Component> T fieldLabeled(Component root, String label, Class<T> type) {
+        JLabel found = findLabel(root, label);
+        return found == null ? null : find(found.getParent(), type);
+    }
+
+    private static JLabel findLabel(Component component, String text) {
+        if (component instanceof JLabel label && text.equals(label.getText())) {
+            return label;
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                JLabel found = findLabel(child, text);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private static boolean containsTextField(Component component, String text) {
@@ -377,6 +518,7 @@ public final class CapturePanelTest {
         formEmbedsAccessibleDateAndTimeSelectors();
         birdStatusSelectorUsesTheOfficialCatalogAndStoresItsCode();
         editModeUsesTheFormAndKeepsHistoricalCatalogValues();
+        placeSelectorShowsCoordinatesInOptionsAndSelection();
         System.out.println("CapturePanelTest: PASS");
     }
 }

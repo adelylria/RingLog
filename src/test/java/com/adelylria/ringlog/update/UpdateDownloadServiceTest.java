@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;

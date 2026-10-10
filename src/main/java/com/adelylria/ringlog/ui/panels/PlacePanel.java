@@ -9,11 +9,13 @@ import java.awt.FlowLayout;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Predicate;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.ScrollPaneConstants;
@@ -23,6 +25,7 @@ import com.adelylria.ringlog.model.input.PlaceInput;
 import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.repository.CatalogRepository;
 import com.adelylria.ringlog.ui.components.EmptyStatePanel;
+import com.adelylria.ringlog.ui.components.FormChanges;
 import com.adelylria.ringlog.ui.components.NavigationIcon;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.PlaceForm;
@@ -44,6 +47,22 @@ public class PlacePanel extends JPanel {
     private JButton currentSaveButton;
     private JPanel currentEditor;
     private boolean mutationActionsEnabled = true;
+    private boolean saving;
+    private FormChanges changes;
+    private Predicate<JOptionPane> discardConfirmation;
+
+    public void setDiscardConfirmation(Predicate<JOptionPane> confirmation) {
+        discardConfirmation = confirmation;
+        if (changes != null) changes.setConfirmation(confirmation);
+    }
+
+    public boolean hasUnsavedChanges() { return changes != null && changes.hasChanges(); }
+
+    public boolean confirmLeave() {
+        if (saving) return false;
+        if (changes != null && !changes.confirmDiscard()) return false;
+        return true;
+    }
 
     public PlacePanel(CatalogRepository catalogRepository) {
         this(catalogRepository, true);
@@ -96,7 +115,7 @@ public class PlacePanel extends JPanel {
             newPlaceButton.setEnabled(enabled);
         }
         if (currentSaveButton != null) {
-            currentSaveButton.setEnabled(enabled);
+            currentSaveButton.setEnabled(enabled && !saving);
         }
         editButtons.forEach(button -> button.setEnabled(enabled));
     }
@@ -119,10 +138,13 @@ public class PlacePanel extends JPanel {
         boolean editing = place != null;
         PlaceForm form = editing ? new PlaceForm(place) : new PlaceForm();
         form.setName("placeEditorForm");
+        changes = new FormChanges(form);
+        if (discardConfirmation != null) changes.setConfirmation(discardConfirmation);
+        changes.markClean();
         JLabel status = UiKit.muted("El nombre es obligatorio; el resto es opcional.");
         JButton cancelButton = UiKit.secondaryButton("Cancelar");
         cancelButton.setName("cancelPlaceEditorButton");
-        cancelButton.addActionListener(event -> showCatalog());
+        cancelButton.addActionListener(event -> { if (confirmLeave()) showCatalog(); });
         currentSaveButton = UiKit.primaryButton(
                 editing ? "Guardar cambios" : "Guardar lugar"
         );
@@ -174,6 +196,8 @@ public class PlacePanel extends JPanel {
             status.setText(exception.getMessage());
             return;
         }
+        saving = true;
+        changes.suspendEditing();
         saveButton.setEnabled(false);
         status.setText("Guardando lugar…");
         new SwingWorker<Long, Void>() {
@@ -186,15 +210,20 @@ public class PlacePanel extends JPanel {
 
             @Override
             protected void done() {
+                changes.resumeEditing();
                 try {
                     get();
+                    saving = false;
+                    if (changes != null) changes.markClean();
                     showCatalog();
                     refreshCards();
                 } catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
+                    saving = false;
                     saveButton.setEnabled(mutationActionsEnabled);
                     status.setText("Se ha interrumpido el guardado.");
                 } catch (ExecutionException exception) {
+                    saving = false;
                     saveButton.setEnabled(mutationActionsEnabled);
                     Throwable cause = exception.getCause();
                     status.setText(cause instanceof IllegalArgumentException
@@ -206,11 +235,13 @@ public class PlacePanel extends JPanel {
     }
 
     public void refresh() {
+        if (!confirmLeave()) return;
         showCatalog();
         refreshCards();
     }
 
     private void showCatalog() {
+        changes = null;
         viewLayout.show(views, CATALOG_VIEW);
         currentSaveButton = null;
         views.revalidate();

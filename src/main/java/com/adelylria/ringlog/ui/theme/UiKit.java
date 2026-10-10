@@ -197,6 +197,7 @@ public final class UiKit {
             case "GOOD" -> "Buen estado";
             case "REGULAR" -> "Regular";
             case "POOR" -> "Delicado";
+            case "DEAD" -> "Muerto";
             case "OK" -> "Correcto";
             case "PENDING" -> "Pendiente";
             case "REVIEW" -> "Revisar";

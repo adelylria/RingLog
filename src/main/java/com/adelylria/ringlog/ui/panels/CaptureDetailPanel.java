@@ -1,12 +1,12 @@
 package com.adelylria.ringlog.ui.panels;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Font;
 import java.awt.FlowLayout;
 import java.awt.Point;
-import java.io.IOException;
-import java.nio.file.Files;
+import java.awt.event.ActionEvent;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,14 +14,15 @@ import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 
-import javax.imageio.ImageIO;
 import javax.swing.Box;
+import javax.swing.AbstractAction;
 import javax.swing.BoxLayout;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 
@@ -31,6 +32,7 @@ import com.adelylria.ringlog.model.BirdStatusCatalog;
 import com.adelylria.ringlog.repository.BirdEventRepository;
 import com.adelylria.ringlog.ui.components.BirdHistoryPanel;
 import com.adelylria.ringlog.ui.components.DetailSection;
+import com.adelylria.ringlog.ui.components.EventPhotoGallery;
 import com.adelylria.ringlog.ui.components.EmptyStatePanel;
 import com.adelylria.ringlog.ui.components.LocationMapPanel;
 import com.adelylria.ringlog.ui.components.PageHeader;
@@ -45,7 +47,15 @@ public class CaptureDetailPanel extends JPanel {
     private final Path mapCacheDirectory;
     private final JPanel content;
     private final JScrollPane scrollPane;
+    private final CardLayout viewLayout = new CardLayout();
+    private final JPanel views = new JPanel(viewLayout);
+    private JPanel photoViewer;
+    private EventPhotoGallery enlargedGallery;
+    private Point photoReturnPosition;
     private long loadGeneration;
+    private EventPhotoGallery photoGallery;
+    private JButton editButton;
+    private boolean mutationsEnabled = true;
 
     public CaptureDetailPanel(
             BirdEventRepository eventRepository,
@@ -97,11 +107,15 @@ public class CaptureDetailPanel extends JPanel {
         scrollPane.setHorizontalScrollBarPolicy(
                 javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         );
-        add(scrollPane, BorderLayout.CENTER);
+        views.setOpaque(false);
+        views.add(scrollPane, "record");
+        add(views, BorderLayout.CENTER);
     }
 
     public void setEventId(long eventId) {
+        closePhotoViewer(false);
         long requestedGeneration = ++loadGeneration;
+        if (photoGallery != null) photoGallery.dispose();
         scrollToTop();
         content.removeAll();
         content.add(new JLabel("Cargando la historia de la anilla…"));
@@ -151,6 +165,7 @@ public class CaptureDetailPanel extends JPanel {
             BirdEventDetail detail,
             List<BirdEventTimelineItem> history
     ) {
+        if (photoGallery != null) photoGallery.dispose();
         content.removeAll();
 
         JButton back = UiKit.secondaryButton("← Volver a registros");
@@ -159,6 +174,8 @@ public class CaptureDetailPanel extends JPanel {
         actions.setOpaque(false);
         if (canEdit) {
             JButton edit = UiKit.primaryButton("Editar este registro");
+            editButton = edit;
+            edit.setEnabled(mutationsEnabled);
             edit.setName("editSelectedEvent");
             edit.addActionListener(event -> onEdit.accept(detail));
             actions.add(edit);
@@ -217,8 +234,6 @@ public class CaptureDetailPanel extends JPanel {
             content.add(Box.createVerticalStrut(14));
         }
 
-        addPhotoGallery(detail);
-
         DetailSection moment = new DetailSection("El momento");
         moment.addRow("Tipo de registro", detail.eventType());
         moment.addRow("Fecha", UiKit.date(detail.eventDate()));
@@ -230,32 +245,37 @@ public class CaptureDetailPanel extends JPanel {
 
         DetailSection bird = new DetailSection("El ave");
         bird.addRow("Anilla", detail.ringNumber());
-        bird.addRow("Especie", detail.species());
+        bird.addWrappingRow("Especie", detail.species());
         bird.addRow("Sexo", UiKit.friendlyCode(detail.sexCode()));
-        bird.addRow("Código de edad EURING", detail.ageEuringCode());
         bird.addRow("Código de estado", statusCode(detail.status()));
         bird.addRow("Categoría de estado", statusCategory(detail.status()));
         bird.addWrappingRow("Estado del ave", statusDescription(detail.status()))
                 .setName("birdStatusDescription");
         bird.addRow("Condición general", UiKit.friendlyCode(detail.birdCondition()));
-        bird.addRow(
+        bird.addRow("Estado vital", detail.dead() ? "Fallecida" : "Viva");
+        photoGallery = new EventPhotoGallery(detail.photoPaths(), null, index -> openPhotoViewer(detail, index));
+        bird.addAside(photoGallery);
+        addSection(bird);
+
+        DetailSection followUp = new DetailSection("Seguimiento");
+        followUp.addRow(
                 "Reproducción",
                 UiKit.friendlyCode(detail.reproductiveStatus())
         );
-        bird.addRow("Muda", UiKit.friendlyCode(detail.moultIntensity()));
-        bird.addRow(
+        followUp.addRow("Muda", UiKit.friendlyCode(detail.moultIntensity()));
+        followUp.addRow(
                 "Extensión de muda",
                 UiKit.friendlyCode(detail.moultExtension())
         );
-        bird.addRow("Vuelta", UiKit.friendlyCode(detail.returnStatus()));
-        bird.addRow("Anillador", detail.ringerInitials());
-        bird.addRow(
+        followUp.addRow("Vuelta", UiKit.friendlyCode(detail.returnStatus()));
+        followUp.addRow("Anillador", detail.ringerInitials());
+        followUp.addWrappingRow(
                 "Clasificación histórica",
                 UiKit.friendlyCode(detail.captureType())
         );
-        bird.addRow("Estado vital", detail.dead() ? "Fallecida" : "Viva");
 
         DetailSection measurements = new DetailSection("Medidas");
+        measurements.addRow("Edad", detail.ageEuringCode());
         measurements.addRow("Ala", withUnit(detail.wing(), "mm"));
         measurements.addRow("P3", withUnit(detail.p3(), "mm"));
         measurements.addRow("Tarso", withUnit(detail.torso(), "mm"));
@@ -265,7 +285,7 @@ public class CaptureDetailPanel extends JPanel {
 
         JPanel columns = UiKit.naturalGrid(2, 14);
         columns.setAlignmentX(Component.LEFT_ALIGNMENT);
-        columns.add(bird);
+        columns.add(followUp);
         columns.add(measurements);
         content.add(columns);
         content.add(Box.createVerticalStrut(14));
@@ -311,43 +331,63 @@ public class CaptureDetailPanel extends JPanel {
         scrollToTopAfterLayout();
     }
 
-    private void addPhotoGallery(BirdEventDetail detail) {
-        if (detail.photoPaths().isEmpty()) {
-            return;
-        }
+    public void setMutationActionsEnabled(boolean enabled) {
+        mutationsEnabled = enabled;
+        if (editButton != null) editButton.setEnabled(enabled);
+    }
 
-        JPanel gallery = UiKit.naturalGrid(2, 14);
-        gallery.setAlignmentX(Component.LEFT_ALIGNMENT);
-        for (String path : detail.photoPaths()) {
-            if (path == null || !Files.isRegularFile(Path.of(path))) {
-                continue;
-            }
-            try {
-                var image = ImageIO.read(Path.of(path).toFile());
-                if (image == null) {
-                    continue;
+    private void openPhotoViewer(BirdEventDetail detail, int index) {
+        closePhotoViewer(false);
+        photoReturnPosition = scrollPane.getViewport().getViewPosition();
+        photoViewer = UiKit.pagePanel();
+        photoViewer.setName("eventPhotoViewer");
+        photoViewer.setLayout(new BorderLayout(0, 24));
+        JButton back = UiKit.secondaryButton("← Volver al registro");
+        back.setName("backToPhotoRecord");
+        back.addActionListener(event -> closePhotoViewer(true));
+        photoViewer.add(new PageHeader(
+                "FOTOGRAFÍAS DEL REGISTRO",
+                "Anilla " + UiKit.display(detail.ringNumber()),
+                detail.eventType() + " · " + UiKit.date(detail.eventDate()) + " · " + UiKit.display(detail.species()),
+                back
+        ), BorderLayout.NORTH);
+        enlargedGallery = EventPhotoGallery.expanded(detail.photoPaths(), index);
+        photoViewer.add(enlargedGallery, BorderLayout.CENTER);
+        photoViewer.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke("ESCAPE"), "backToRecord");
+        photoViewer.getActionMap().put("backToRecord", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) { closePhotoViewer(true); }
+        });
+        views.add(photoViewer, "photos");
+        viewLayout.show(views, "photos");
+        revalidate();
+        repaint();
+        EventPhotoGallery opened = enlargedGallery;
+        SwingUtilities.invokeLater(() -> {
+            if (opened == enlargedGallery) opened.focusImage();
+        });
+    }
+
+    private void closePhotoViewer(boolean restorePosition) {
+        if (photoViewer == null) return;
+        int selectedPhoto = enlargedGallery.selectedIndex();
+        enlargedGallery.dispose();
+        enlargedGallery = null;
+        views.remove(photoViewer);
+        photoViewer = null;
+        viewLayout.show(views, "record");
+        revalidate();
+        repaint();
+        if (restorePosition && photoGallery != null) {
+            photoGallery.showPhoto(selectedPhoto);
+            long generation = loadGeneration;
+            Point position = photoReturnPosition;
+            SwingUtilities.invokeLater(() -> {
+                if (generation == loadGeneration && photoViewer == null) {
+                    photoGallery.focusImage();
+                    scrollPane.getViewport().setViewPosition(position);
                 }
-                double scale = Math.min(
-                        1d,
-                        Math.min(420d / image.getWidth(), 260d / image.getHeight())
-                );
-                int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
-                int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
-                var scaled = image.getScaledInstance(
-                        width,
-                        height,
-                        java.awt.Image.SCALE_SMOOTH
-                );
-                JLabel photo = new JLabel(new ImageIcon(scaled));
-                photo.setBorder(UiKit.cardBorder());
-                gallery.add(photo);
-            } catch (IOException ignored) {
-                // A missing or unreadable image should not make the diary unreadable.
-            }
-        }
-        if (gallery.getComponentCount() > 0) {
-            content.add(gallery);
-            content.add(Box.createVerticalStrut(14));
+            });
         }
     }
 

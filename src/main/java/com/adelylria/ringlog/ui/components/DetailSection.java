@@ -21,6 +21,7 @@ import javax.swing.border.EmptyBorder;
 public class DetailSection extends SurfacePanel {
 
     private final JPanel rows;
+    private final JPanel rowContainer;
     private int rowIndex;
 
     public DetailSection(String title) {
@@ -32,7 +33,10 @@ public class DetailSection extends SurfacePanel {
 
         rows = new JPanel(new GridBagLayout());
         rows.setOpaque(false);
-        add(rows, BorderLayout.CENTER);
+        rowContainer = new JPanel(new BorderLayout());
+        rowContainer.setOpaque(false);
+        rowContainer.add(rows, BorderLayout.NORTH);
+        add(rowContainer, BorderLayout.CENTER);
     }
 
     public void addRow(String label, Object value) {
@@ -109,11 +113,14 @@ public class DetailSection extends SurfacePanel {
     }
 
     public void addAside(Component component) {
-        remove(rows);
+        remove(rowContainer);
         JPanel columns = new JPanel(new GridLayout(1, 2, 24, 0));
         columns.setOpaque(false);
-        columns.add(rows);
-        columns.add(component);
+        columns.add(rowContainer);
+        JPanel aside = new JPanel(new BorderLayout());
+        aside.setOpaque(false);
+        aside.add(component, BorderLayout.NORTH);
+        columns.add(aside);
         add(columns, BorderLayout.CENTER);
     }
 

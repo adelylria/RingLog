@@ -165,8 +165,8 @@ public final class BirdEventUiTest {
                 .map(JLabel::getText)
                 .toList();
 
-        require(labels.contains("Código de edad EURING"),
-                "The form should use the schema's age EURING name");
+        require(labels.contains("Edad") && !labels.contains("Código de edad EURING"),
+                "The form should use the concise Edad label for the existing EURING field");
         require(labels.contains("Estado") && !labels.contains("Estado oficial (código)"),
                 "The bird-state selector should use the concise Estado label");
         require(!labels.contains("Latitud") && !labels.contains("Longitud"),
@@ -545,6 +545,13 @@ public final class BirdEventUiTest {
                         && texts.contains("Archivo y revisión")
                         && texts.contains("Sin fotografías"),
                 "Notes, review state and photo state must always be explicit");
+        require(texts.contains("Edad") && texts.contains("Seguimiento"),
+                "The complete detail should group measurements and follow-up data clearly");
+        require(onEdt(() -> descendants(panel, com.adelylria.ringlog.ui.components.DetailSection.class)
+                        .stream().anyMatch(section -> descendants(section, JLabel.class).stream()
+                                .anyMatch(label -> "El ave".equals(label.getText()))
+                                && !descendants(section, com.adelylria.ringlog.ui.components.EventPhotoGallery.class).isEmpty())),
+                "The photo gallery must be embedded in El ave, not in a separate gallery above the record");
         require(descendants(panel, JButton.class).stream().anyMatch(button ->
                         "© OpenStreetMap contributors".equals(button.getText())),
                 "A georeferenced record should keep attribution inside its compact map");

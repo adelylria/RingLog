@@ -77,6 +77,15 @@ public class MainFrame extends JFrame {
     private JMenuItem portableMenuItem;
     private boolean portableCreationBusy;
     private boolean snapshotBusy;
+    private String currentScreen;
+
+    /** Shared by sidebar navigation, closing and destructive context changes. */
+    public boolean confirmLeaveCurrentEditor() {
+        if (NEW_CAPTURE.equals(currentScreen) && capturePanel != null) return capturePanel.confirmLeave();
+        if (PLACES.equals(currentScreen)) return placePanel.confirmLeave();
+        if (SPECIES.equals(currentScreen)) return speciesPanel.confirmLeave();
+        return true;
+    }
 
     public MainFrame() {
         this(ApplicationContext.normal(AppPaths.production()));
@@ -103,6 +112,7 @@ public class MainFrame extends JFrame {
             updateCoordinator = UpdateCoordinator.application(
                     updateOverlay, this::closeForUpdate
             );
+            updateCoordinator.setBeforeInstall(this::confirmLeaveCurrentEditor);
         } else {
             updateOverlay = null;
             updateCoordinator = null;
@@ -134,7 +144,8 @@ public class MainFrame extends JFrame {
                 eventRepository,
                 catalogRepository,
                 this::showEvent,
-                () -> navigate(CAPTURES)
+                () -> navigate(CAPTURES),
+                context.mutationServices().orElseThrow().eventPhotos()
         ) : null;
         speciesPanel = new SpeciesPanel(
                 catalogRepository, context.capabilities().manageCatalogs()
@@ -188,7 +199,7 @@ public class MainFrame extends JFrame {
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent event) {
-                if (!portableCreationBusy) {
+                if (!portableCreationBusy && confirmLeaveCurrentEditor()) {
                     dispose();
                     System.exit(0);
                 }
@@ -280,12 +291,14 @@ public class MainFrame extends JFrame {
     }
 
     public void navigate(String screen) {
+        if (!confirmLeaveCurrentEditor()) return;
         if ((NEW_CAPTURE.equals(screen) && !context.capabilities().mutateDiary())
                 || (PORTABLE_COPY.equals(screen)
                 && !context.capabilities().createPortableCopy())) {
             screen = HOME;
         }
         cardLayout.show(contentPanel, screen);
+        currentScreen = screen;
         sidebar.setActiveDestination(screen);
         switch (screen) {
             case HOME -> homePanel.refresh();
@@ -313,6 +326,7 @@ public class MainFrame extends JFrame {
         }
         capturePanel.edit(detail);
         cardLayout.show(contentPanel, NEW_CAPTURE);
+        currentScreen = NEW_CAPTURE;
         sidebar.setActiveDestination(CAPTURES);
     }
 
@@ -334,7 +348,12 @@ public class MainFrame extends JFrame {
         ApplicationMutationServices mutations = context.mutationServices().orElse(null);
         if (context.capabilities().importOrRestore() && mutations != null) {
             importMenuItem = new JMenuItem("Importar historial o copia…");
-            importMenuItem.addActionListener(event -> settingsPanel.startImportChooser());
+            importMenuItem.addActionListener(event -> {
+                if (confirmLeaveCurrentEditor()) {
+                    navigate(SETTINGS);
+                    settingsPanel.startImportChooser();
+                }
+            });
             file.add(importMenuItem);
         }
         if (context.capabilities().exportNativeBackup() && mutations != null) {
@@ -368,6 +387,7 @@ public class MainFrame extends JFrame {
         sidebar.setMutationActionsEnabled(enabled);
         homePanel.setMutationActionsEnabled(enabled);
         captureListPanel.setMutationActionsEnabled(enabled);
+        captureDetailPanel.setMutationActionsEnabled(enabled);
         speciesPanel.setMutationActionsEnabled(enabled);
         placePanel.setMutationActionsEnabled(enabled);
         conflictsPanel.setMutationActionsEnabled(enabled);

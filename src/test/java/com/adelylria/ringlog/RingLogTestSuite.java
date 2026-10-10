@@ -1,6 +1,11 @@
 package com.adelylria.ringlog;
 
 import com.adelylria.ringlog.backup.BackupExportServiceTest;
+import com.adelylria.ringlog.media.EventPhotoServiceTest;
+import com.adelylria.ringlog.media.EventPhotoDeletionTest;
+import com.adelylria.ringlog.ui.EventPhotoRemovalUiTest;
+import com.adelylria.ringlog.ui.EditingUxTest;
+import com.adelylria.ringlog.ui.EditingIntegrationTest;
 import com.adelylria.ringlog.build.DistributionConfigurationTest;
 import com.adelylria.ringlog.build.ReleaseVersionToolTest;
 import com.adelylria.ringlog.build.ReleaseToolingTest;
@@ -47,6 +52,9 @@ import com.adelylria.ringlog.ui.BirdEventUiTest;
 import com.adelylria.ringlog.ui.ApplicationIconTest;
 import com.adelylria.ringlog.ui.CalendarDatePickerTest;
 import com.adelylria.ringlog.ui.CapturePanelTest;
+import com.adelylria.ringlog.ui.EventPhotoGalleryTest;
+import com.adelylria.ringlog.ui.EventPhotoViewerTest;
+import com.adelylria.ringlog.ui.EventPhotoEditingTest;
 import com.adelylria.ringlog.ui.CatalogFormTest;
 import com.adelylria.ringlog.ui.CatalogRefreshTest;
 import com.adelylria.ringlog.ui.LayoutDesignTest;
@@ -92,6 +100,11 @@ public final class RingLogTestSuite {
                 BuildInfoTest.class,
                 BirdEventFormattingTest.class,
                 BirdStatusCatalogTest.class,
+                EventPhotoServiceTest.class,
+                EventPhotoDeletionTest.class,
+                EventPhotoRemovalUiTest.class,
+                EditingUxTest.class,
+                EditingIntegrationTest.class,
                 AppPathsTest.class,
                 MediaPathResolverTest.class,
                 LegacyDataLocationDetectorTest.class,
@@ -125,6 +138,9 @@ public final class RingLogTestSuite {
                 BirdEventUiTest.class,
                 CatalogFormTest.class,
                 CapturePanelTest.class,
+                EventPhotoGalleryTest.class,
+                EventPhotoViewerTest.class,
+                EventPhotoEditingTest.class,
                 ThemeManagerTest.class,
                 LayoutDesignTest.class,
                 CatalogRefreshTest.class,

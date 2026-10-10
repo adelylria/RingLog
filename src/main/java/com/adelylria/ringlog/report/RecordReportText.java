@@ -39,6 +39,7 @@ final class RecordReportText {
             case "CORRECT", "OK" -> "Correcto";
             case "REGULAR" -> "Regular";
             case "POOR" -> "Delicado";
+            case "DEAD" -> "Muerto";
             case "PENDING" -> "Pendiente";
             case "REVIEW" -> "Revisar";
             case "NONE" -> "Ninguno";

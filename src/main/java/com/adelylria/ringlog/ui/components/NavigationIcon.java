@@ -24,6 +24,7 @@ public final class NavigationIcon implements Icon {
         REPORTS,
         REVIEWS,
         EDIT,
+        DELETE,
         SETTINGS
     }
 
@@ -71,6 +72,13 @@ public final class NavigationIcon implements Icon {
                 case REPORTS -> paintReports(g2);
                 case REVIEWS -> paintReviews(g2);
                 case EDIT -> paintEdit(g2);
+                case DELETE -> {
+                    g2.draw(new Line2D.Double(3, 5, 15, 5));
+                    g2.draw(new Rectangle2D.Double(7, 2, 4, 3));
+                    g2.draw(new Rectangle2D.Double(5, 5, 8, 11));
+                    g2.draw(new Line2D.Double(8, 8, 8, 13));
+                    g2.draw(new Line2D.Double(10, 8, 10, 13));
+                }
                 case SETTINGS -> paintSettings(g2);
             }
         } finally {

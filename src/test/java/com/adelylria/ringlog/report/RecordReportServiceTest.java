@@ -35,6 +35,13 @@ public final class RecordReportServiceTest {
     private RecordReportServiceTest() {
     }
 
+    public static void deadConditionHasAReadableLabelInReports() {
+        require("Muerto".equals(RecordReportText.friendly("DEAD")),
+                "PDF reports must show the new condition as Muerto");
+        require("DEAD · Muerto".equals(RecordReportText.coded("DEAD")),
+                "XLSX reports must retain the condition code and its readable label");
+    }
+
     public static void excelContainsTheCompleteFilteredDataset() throws Exception {
         Path directory = Files.createTempDirectory("ringlog-record-report-xlsx-");
         try {
@@ -673,6 +680,7 @@ public final class RecordReportServiceTest {
     }
 
     public static void main(String[] args) throws Exception {
+        deadConditionHasAReadableLabelInReports();
         excelContainsTheCompleteFilteredDataset();
         pdfStartsEachRecordOnItsOwnPage();
         failedExportPreservesAnExistingFile();

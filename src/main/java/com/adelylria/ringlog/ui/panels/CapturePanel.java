@@ -7,6 +7,8 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
@@ -20,10 +22,12 @@ import java.util.function.Consumer;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
@@ -43,6 +47,10 @@ import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.model.view.SpeciesOption;
 import com.adelylria.ringlog.repository.BirdEventRepository;
 import com.adelylria.ringlog.repository.CatalogRepository;
+import com.adelylria.ringlog.media.EventPhotoService;
+import com.adelylria.ringlog.ui.components.EventPhotoEditor;
+import com.adelylria.ringlog.ui.components.FormChanges;
+import com.adelylria.ringlog.ui.components.MeasurementInput;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.DateSelector;
 import com.adelylria.ringlog.ui.components.TimeSelector;
@@ -67,7 +75,6 @@ public class CapturePanel extends JPanel {
     private final TimeSelector timeSelector;
     private final JTextField locationTextField;
     private final JTextField ageEuringCodeField;
-    private final JTextField initialsField;
     private final JTextField reproductiveField;
     private final JTextField moultIntensityField;
     private final JTextField moultExtensionField;
@@ -85,11 +92,41 @@ public class CapturePanel extends JPanel {
     private final Timer ringLookupTimer;
     private final JPanel headerHolder;
     private Long editingEventId;
+    private String preservedRingerInitials;
     private Long pendingSpeciesId;
     private Long pendingPlaceId;
     private SpeciesOption pendingSpeciesFallback;
     private PlaceSummary pendingPlaceFallback;
     private int catalogLoadGeneration;
+    private final EventPhotoService photoService;
+    private final EventPhotoEditor photoEditor;
+    private JButton cancelButton;
+    private boolean saving;
+    private boolean mutationsEnabled = true;
+    private long formGeneration;
+    private final Map<String, MeasurementInput> measurementInputs = new LinkedHashMap<>();
+    private final FormChanges changes = new FormChanges(this, () -> photoDraft());
+
+    private Object photoDraft() {
+        return photoEditor == null ? List.of() : List.of(photoEditor.pendingPhotos(), photoEditor.removedPhotos());
+    }
+
+    public boolean hasUnsavedChanges() { return changes.hasChanges(); }
+    public void setDiscardConfirmation(java.util.function.Predicate<javax.swing.JOptionPane> confirmation) {
+        changes.setConfirmation(confirmation);
+    }
+    public boolean confirmLeave() {
+        if (saving) {
+            statusLabel.setText("Espera a que termine el guardado antes de salir.");
+            return false;
+        }
+        if (!changes.confirmDiscard()) return false;
+        ringLookupTimer.stop();
+        catalogLoadGeneration++;
+        if (photoEditor != null) photoEditor.discardPending();
+        changes.markClean();
+        return true;
+    }
 
     public CapturePanel(
             BirdEventRepository eventRepository,
@@ -97,24 +134,37 @@ public class CapturePanel extends JPanel {
             Consumer<Long> onSaved,
             Runnable onCancel
     ) {
+        this(eventRepository, catalogRepository, onSaved, onCancel, null);
+    }
+
+    public CapturePanel(BirdEventRepository eventRepository, CatalogRepository catalogRepository,
+            Consumer<Long> onSaved, Runnable onCancel, EventPhotoService photoService) {
+        this(eventRepository, catalogRepository, onSaved, onCancel, photoService,
+                photoService == null ? null : new EventPhotoEditor());
+    }
+
+    public CapturePanel(BirdEventRepository eventRepository, CatalogRepository catalogRepository,
+            Consumer<Long> onSaved, Runnable onCancel, EventPhotoService photoService, EventPhotoEditor photoEditor) {
         this.eventRepository = eventRepository;
         this.catalogRepository = catalogRepository;
         this.onSaved = onSaved;
         this.onCancel = onCancel;
+        this.photoService = photoService;
+        this.photoEditor = photoService == null ? null : java.util.Objects.requireNonNull(photoEditor);
         this.ringNumberField = new JTextField();
         this.speciesCombo = new JComboBox<>();
         this.eventTypeCombo = new JComboBox<>(EventType.values());
-        this.placeCombo = new JComboBox<>();
+        this.placeCombo = placeSelector();
         this.sexCombo = combo("Sin indicar", "Macho", "Hembra");
         this.statusCombo = birdStatusCombo();
         this.statusCombo.setName("birdStatusField");
-        this.conditionCombo = combo("Buen estado", "Regular", "Delicado");
+        this.conditionCombo = combo("Buen estado", "Regular", "Delicado", "Muerto");
         this.captureTypeCombo = combo("Sin indicar", "Captura", "Recaptura");
         this.dateSelector = new DateSelector(LocalDate.now());
         this.timeSelector = new TimeSelector(LocalTime.now());
         this.locationTextField = new JTextField();
         this.ageEuringCodeField = new JTextField();
-        this.initialsField = new JTextField();
+        this.ageEuringCodeField.setName("ageEuringCodeField");
         this.reproductiveField = new JTextField();
         this.moultIntensityField = new JTextField();
         this.moultExtensionField = new JTextField();
@@ -126,6 +176,7 @@ public class CapturePanel extends JPanel {
         this.deadCheck = new JCheckBox("Ave fallecida");
         this.deadCheck.setOpaque(false);
         this.observationsArea = new JTextArea(5, 40);
+        this.observationsArea.setName("observationsField");
         this.numberFields = new LinkedHashMap<>();
         this.birdLookupLabel = UiKit.muted(
                 "Escribe una anilla para comprobar su historial."
@@ -214,7 +265,11 @@ public class CapturePanel extends JPanel {
     }
 
     public void prepareNew() {
+        formGeneration++;
+        saving = false;
+        if (photoEditor != null) photoEditor.reset(List.of());
         editingEventId = null;
+        preservedRingerInitials = null;
         pendingSpeciesId = null;
         pendingPlaceId = null;
         pendingSpeciesFallback = null;
@@ -227,10 +282,9 @@ public class CapturePanel extends JPanel {
         locationTextField.setText("");
         resetCombo(sexCombo, "Sin indicar", "Macho", "Hembra");
         resetBirdStatusCombo("B0");
-        resetCombo(conditionCombo, "Buen estado", "Regular", "Delicado");
+        resetCombo(conditionCombo, "Buen estado", "Regular", "Delicado", "Muerto");
         resetCombo(captureTypeCombo, "Sin indicar", "Captura", "Recaptura");
         ageEuringCodeField.setText("");
-        initialsField.setText("");
         reproductiveField.setText("");
         moultIntensityField.setText("");
         moultExtensionField.setText("");
@@ -246,20 +300,34 @@ public class CapturePanel extends JPanel {
         birdLookupLabel.setText("Escribe una anilla para comprobar su historial.");
         statusLabel.setText("Completa los datos del momento que quieres guardar.");
         saveButton.setText("Guardar evento");
-        saveButton.setEnabled(true);
         renderHeader();
+        updateActionAvailability();
+        measurementInputs.values().forEach(MeasurementInput::clearError);
+        changes.markClean();
         refreshCatalogs();
     }
 
     public void setMutationActionsEnabled(boolean enabled) {
-        saveButton.setEnabled(enabled);
+        mutationsEnabled = enabled;
+        updateActionAvailability();
+    }
+
+    private void updateActionAvailability() {
+        saveButton.setEnabled(mutationsEnabled && !saving);
+        if (photoEditor != null) photoEditor.setMutationActionsEnabled(mutationsEnabled && !saving);
+        if (cancelButton != null) cancelButton.setEnabled(!saving);
     }
 
     public void edit(BirdEventDetail detail) {
         if (detail == null) {
             throw new IllegalArgumentException("Falta el registro que quieres editar.");
         }
+        formGeneration++;
+        saving = false;
+        if (photoEditor != null) photoEditor.reset(detail.photoPaths());
         editingEventId = detail.id();
+        // No longer editable, but still part of the historical event and its exports.
+        preservedRingerInitials = detail.ringerInitials();
         pendingSpeciesId = detail.speciesId();
         pendingPlaceId = detail.placeId();
         pendingSpeciesFallback = detail.speciesId() < 1
@@ -289,7 +357,6 @@ public class CapturePanel extends JPanel {
         selectCode(conditionCombo, detail.birdCondition());
         selectCode(captureTypeCombo, detail.captureType());
         ageEuringCodeField.setText(text(detail.ageEuringCode()));
-        initialsField.setText(text(detail.ringerInitials()));
         reproductiveField.setText(text(detail.reproductiveStatus()));
         moultIntensityField.setText(text(detail.moultIntensity()));
         moultExtensionField.setText(text(detail.moultExtension()));
@@ -312,14 +379,17 @@ public class CapturePanel extends JPanel {
         );
         statusLabel.setText("Revisa los cambios antes de guardarlos.");
         saveButton.setText("Guardar cambios");
-        saveButton.setEnabled(true);
         renderHeader();
+        updateActionAvailability();
+        measurementInputs.values().forEach(MeasurementInput::clearError);
+        changes.markClean();
         refreshCatalogs();
     }
 
     private void renderHeader() {
         boolean editing = editingEventId != null;
-        JButton cancelButton = UiKit.secondaryButton(editing ? "Cancelar edición" : "Cancelar");
+        cancelButton = UiKit.secondaryButton(editing ? "Cancelar edición" : "Cancelar");
+        cancelButton.setName("cancelEventEdit");
         cancelButton.addActionListener(event -> cancel());
         headerHolder.removeAll();
         headerHolder.add(new PageHeader(
@@ -335,6 +405,9 @@ public class CapturePanel extends JPanel {
     }
 
     private void cancel() {
+        if (!confirmLeave()) return;
+        formGeneration++;
+        if (photoEditor != null) photoEditor.discardPending();
         if (editingEventId != null) {
             onSaved.accept(editingEventId);
         } else {
@@ -375,23 +448,31 @@ public class CapturePanel extends JPanel {
         addField(grid, 0, "Sexo", sexCombo);
         addField(grid, 1, "Estado", statusCombo);
         addField(grid, 2, "Condición general", conditionCombo);
-        addField(grid, 3, "Iniciales", initialsField);
-        addField(grid, 4, "Reproducción", reproductiveField);
-        addField(grid, 5, "Intensidad de muda", moultIntensityField);
-        addField(grid, 6, "Extensión de muda", moultExtensionField);
-        addField(grid, 7, "Vuelta", returnField);
+        addField(grid, 3, "Reproducción", reproductiveField);
+        addField(grid, 4, "Intensidad de muda", moultIntensityField);
+        addField(grid, 5, "Extensión de muda", moultExtensionField);
+        addField(grid, 6, "Vuelta", returnField);
         panel.add(grid, BorderLayout.CENTER);
 
-        JPanel measurements = new JPanel(new GridLayout(2, 3, 12, 10));
+        JPanel measurements = new JPanel(new GridLayout(0, photoEditor == null ? 4 : 2, 12, 10));
+        measurements.setName("measurementsGrid");
         measurements.setOpaque(false);
-        measurements.setBorder(new javax.swing.border.EmptyBorder(15, 0, 0, 0));
+        addMeasurement(measurements, "Edad", ageEuringCodeField);
         addNumber(measurements, "Ala", "wing");
         addNumber(measurements, "P3", "p3");
         addNumber(measurements, "Tarso", "torso");
         addNumber(measurements, "Peso", "weight");
         addNumber(measurements, "Grasa", "fat");
         addNumber(measurements, "Músculo", "muscle");
-        panel.add(measurements, BorderLayout.SOUTH);
+        JPanel lower = new JPanel(new BorderLayout(20, 0));
+        lower.setOpaque(false);
+        lower.setBorder(new javax.swing.border.EmptyBorder(15, 0, 0, 0));
+        JPanel measurementHolder = new JPanel(new BorderLayout());
+        measurementHolder.setOpaque(false);
+        measurementHolder.add(measurements, BorderLayout.NORTH);
+        lower.add(measurementHolder, BorderLayout.CENTER);
+        if (photoEditor != null) lower.add(photoEditor, BorderLayout.EAST);
+        panel.add(lower, BorderLayout.SOUTH);
         return panel;
     }
 
@@ -439,9 +520,8 @@ public class CapturePanel extends JPanel {
                 "Información administrativa para completar la ficha."
         ), BorderLayout.NORTH);
         JPanel grid = grid();
-        addField(grid, 0, "Código de edad EURING", ageEuringCodeField);
-        addField(grid, 1, "Clasificación histórica", captureTypeCombo);
-        addField(grid, 2, "Estado vital", deadCheck);
+        addField(grid, 0, "Clasificación histórica", captureTypeCombo);
+        addField(grid, 1, "Estado vital", deadCheck);
         panel.add(grid, BorderLayout.CENTER);
         return panel;
     }
@@ -467,6 +547,7 @@ public class CapturePanel extends JPanel {
         item.setOpaque(false);
         item.add(UiKit.muted(label), BorderLayout.NORTH);
         item.add(field, BorderLayout.CENTER);
+        item.setMinimumSize(new Dimension(0, item.getMinimumSize().height));
 
         int column = position % 2;
         int row = position / 2;
@@ -486,23 +567,61 @@ public class CapturePanel extends JPanel {
     }
 
     private void addNumber(JPanel parent, String label, String key) {
-        JPanel item = new JPanel(new BorderLayout(0, 3));
-        item.setOpaque(false);
-        item.add(UiKit.muted(label), BorderLayout.NORTH);
-        item.add(addNumberField(key), BorderLayout.CENTER);
-        parent.add(item);
+        boolean integer = "fat".equals(key) || "muscle".equals(key);
+        MeasurementInput input = new MeasurementInput(label, key, integer ? null : "weight".equals(key) ? "g" : "mm", integer);
+        measurementInputs.put(key, input);
+        numberFields.put(key, input.field());
+        parent.add(input);
     }
 
-    private JTextField addNumberField(String key) {
-        JTextField field = new JTextField(7);
-        numberFields.put(key, field);
-        return field;
+    private void addMeasurement(JPanel parent, String label, JTextField field) {
+        JPanel item = new JPanel(new BorderLayout(0, 3));
+        item.setOpaque(false);
+        JLabel caption = UiKit.muted(label);
+        caption.setLabelFor(field);
+        item.add(caption, BorderLayout.NORTH);
+        item.add(field, BorderLayout.CENTER);
+        JPanel holder = new JPanel(new BorderLayout());
+        holder.setOpaque(false);
+        holder.add(item, BorderLayout.NORTH);
+        parent.add(holder);
     }
 
     private static JComboBox<String> combo(String... values) {
         JComboBox<String> combo = new JComboBox<>(values);
         combo.setPreferredSize(new Dimension(260, combo.getPreferredSize().height));
         return combo;
+    }
+
+    private static JComboBox<PlaceSummary> placeSelector() {
+        JComboBox<PlaceSummary> combo = new JComboBox<>();
+        combo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(
+                    JList<?> list, Object value, int index, boolean selected, boolean focused
+            ) {
+                super.getListCellRendererComponent(list, value, index, selected, focused);
+                String label = placeLabel((PlaceSummary) value);
+                setText(label);
+                setToolTipText(label);
+                return this;
+            }
+        });
+        combo.setPreferredSize(new Dimension(260, combo.getPreferredSize().height));
+        combo.setMinimumSize(new Dimension(0, combo.getPreferredSize().height));
+        combo.addActionListener(event -> combo.setToolTipText(
+                placeLabel((PlaceSummary) combo.getSelectedItem())));
+        return combo;
+    }
+
+    private static String placeLabel(PlaceSummary place) {
+        if (place == null) {
+            return "";
+        }
+        String coordinates = place.latitude() == null || place.longitude() == null
+                ? "Sin coordenadas"
+                : String.format(Locale.ROOT, "%.6f, %.6f", place.latitude(), place.longitude());
+        return place + " · " + coordinates;
     }
 
     private static JComboBox<BirdStatusChoice> birdStatusCombo() {
@@ -539,15 +658,21 @@ public class CapturePanel extends JPanel {
 
             @Override
             protected void done() {
-                if (generation != catalogLoadGeneration) {
+                if (generation != catalogLoadGeneration || saving) {
                     return;
                 }
                 try {
                     Options options = get();
+                    boolean cleanSpecies = !changes.isChanged(speciesCombo);
+                    boolean cleanPlace = !changes.isChanged(placeCombo);
+                    SpeciesOption liveSpecies = (SpeciesOption) speciesCombo.getSelectedItem();
+                    PlaceSummary livePlace = (PlaceSummary) placeCombo.getSelectedItem();
+                    Long speciesToSelect = cleanSpecies ? selectedSpeciesId : liveSpecies == null ? null : liveSpecies.id();
+                    Long placeToSelect = cleanPlace ? selectedPlaceId : livePlace == null ? null : livePlace.id();
                     speciesCombo.removeAllItems();
                     options.species().forEach(speciesCombo::addItem);
-                    if (selectedSpeciesId != null) {
-                        if (!selectSpecies(selectedSpeciesId)
+                    if (speciesToSelect != null) {
+                        if (!selectSpecies(speciesToSelect)
                                 && pendingSpeciesFallback != null) {
                             speciesCombo.addItem(pendingSpeciesFallback);
                             speciesCombo.setSelectedItem(pendingSpeciesFallback);
@@ -559,13 +684,13 @@ public class CapturePanel extends JPanel {
                     placeCombo.removeAllItems();
                     placeCombo.addItem(null);
                     options.places().forEach(placeCombo::addItem);
-                    if (selectedPlaceId != null) {
-                        if (!selectPlace(selectedPlaceId)
+                    if (placeToSelect != null) {
+                        if (!selectPlace(placeToSelect)
                                 && pendingPlaceFallback != null) {
                             placeCombo.addItem(pendingPlaceFallback);
                             placeCombo.setSelectedItem(pendingPlaceFallback);
                         }
-                    } else if (!editing) {
+                    } else if (!editing && cleanPlace) {
                         options.places().stream()
                                 .filter(PlaceSummary::isDefault)
                                 .findFirst()
@@ -573,6 +698,8 @@ public class CapturePanel extends JPanel {
                     }
                     pendingPlaceId = null;
                     pendingPlaceFallback = null;
+                    if (cleanSpecies) changes.acceptValue(speciesCombo);
+                    if (cleanPlace) changes.acceptValue(placeCombo);
                     statusLabel.setText(editing
                             ? "Revisa los cambios antes de guardarlos."
                             : options.species().isEmpty()
@@ -630,7 +757,7 @@ public class CapturePanel extends JPanel {
 
             @Override
             protected void done() {
-                if (!requestedRing.equals(normalizedRing())) {
+                if (!requestedRing.equals(normalizedRing()) || saving) {
                     return;
                 }
                 try {
@@ -677,6 +804,7 @@ public class CapturePanel extends JPanel {
     }
 
     private void save() {
+        if (saving || !mutationsEnabled) return;
         final BirdEventInput input;
         try {
             input = collectInput();
@@ -685,7 +813,13 @@ public class CapturePanel extends JPanel {
             return;
         }
 
-        saveButton.setEnabled(false);
+        saving = true;
+        ringLookupTimer.stop();
+        changes.suspendEditing();
+        updateActionAvailability();
+        long generation = formGeneration;
+        List<Path> photos = photoEditor == null ? List.of() : photoEditor.pendingPhotos();
+        List<String> removedPhotos = photoEditor == null ? List.of() : photoEditor.removedPhotos();
         Long eventId = editingEventId;
         statusLabel.setText(eventId == null
                 ? "Guardando el registro…"
@@ -693,7 +827,10 @@ public class CapturePanel extends JPanel {
 
         new SwingWorker<Long, Void>() {
             @Override
-            protected Long doInBackground() {
+            protected Long doInBackground() throws IOException {
+                if (!photos.isEmpty() || !removedPhotos.isEmpty()) {
+                    return photoService.saveEvent(eventId, input, photos, removedPhotos);
+                }
                 if (eventId == null) {
                     return eventRepository.insert(input);
                 }
@@ -703,28 +840,47 @@ public class CapturePanel extends JPanel {
 
             @Override
             protected void done() {
+                if (generation != formGeneration) return;
                 try {
                     long id = get();
+                    if (photoEditor != null) photoEditor.discardPending();
+                    saving = false;
+                    changes.resumeEditing();
+                    changes.markClean();
                     statusLabel.setText(eventId == null
                             ? "Registro guardado"
                             : "Cambios guardados");
                     onSaved.accept(id);
                 } catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
-                    saveButton.setEnabled(true);
                     statusLabel.setText("Se ha interrumpido el guardado.");
                 } catch (ExecutionException exception) {
-                    saveButton.setEnabled(true);
                     Throwable cause = exception.getCause();
-                    statusLabel.setText(cause instanceof IllegalArgumentException
+                    statusLabel.setText(cause instanceof IllegalArgumentException || cause instanceof IOException
                             ? cause.getMessage()
                             : "No se ha podido guardar; revisa los datos e inténtalo de nuevo.");
+                } finally {
+                    saving = false;
+                    changes.resumeEditing();
+                    updateActionAvailability();
                 }
             }
         }.execute();
     }
 
     private BirdEventInput collectInput() {
+        MeasurementInput firstInvalid = null;
+        for (MeasurementInput measurement : measurementInputs.values()) {
+            if (!measurement.validateValue() && firstInvalid == null) firstInvalid = measurement;
+        }
+        if (firstInvalid != null) {
+            MeasurementInput target = firstInvalid;
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                target.scrollRectToVisible(new java.awt.Rectangle(0, 0, target.getWidth(), target.getHeight()));
+                target.field().requestFocusInWindow();
+            });
+            throw new IllegalArgumentException("Revisa las medidas señaladas antes de guardar.");
+        }
         if (ringNumberField.getText().isBlank()) {
             throw new IllegalArgumentException("Indica el número de anilla.");
         }
@@ -741,7 +897,7 @@ public class CapturePanel extends JPanel {
                 ageEuringCodeField.getText().trim(),
                 parseOptionalInteger(numberFields.get("fat").getText()),
                 parseOptionalInteger(numberFields.get("muscle").getText()),
-                initialsField.getText().trim(),
+                preservedRingerInitials,
                 selectedBirdStatusCode(),
                 reproductiveField.getText().trim(),
                 moultIntensityField.getText().trim(),
@@ -793,6 +949,7 @@ public class CapturePanel extends JPanel {
         return switch (UiKit.display(value)) {
             case "Buen estado" -> "GOOD";
             case "Delicado" -> "POOR";
+            case "Muerto" -> "DEAD";
             case "Sin indicar", "—" -> null;
             default -> UiKit.display(value).toUpperCase(Locale.ROOT);
         };

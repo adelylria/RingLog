@@ -488,7 +488,13 @@ public class BirdEventRepository {
     }
 
     public long insert(BirdEventInput input) {
+        return insert(input, List.of());
+    }
+
+    /** Saves prepared, managed photos in the same transaction as the new record. */
+    public long insert(BirdEventInput input, List<EventPhotoEntity> newPhotos) {
         validateInput(input);
+        List<EventPhotoEntity> photos = List.copyOf(newPhotos);
 
         try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
             return databaseAccess.withOrm(source ->
@@ -498,6 +504,7 @@ public class BirdEventRepository {
                         long birdId = resolveBirdId(birds, input);
                         BirdEventEntity event = new BirdEventEntity(birdId, input);
                         events.create(event);
+                        insertPhotos(source, event.id(), photos);
                         return event.id();
                     })
             );
@@ -511,7 +518,20 @@ public class BirdEventRepository {
     }
 
     public void update(long eventId, BirdEventInput input) {
+        update(eventId, input, List.of());
+    }
+
+    /** Keeps existing photos; any new photos and field edits either all commit or all roll back. */
+    public void update(long eventId, BirdEventInput input, List<EventPhotoEntity> newPhotos) {
+        update(eventId, input, newPhotos, List.of());
+    }
+
+    /** Returns removed managed references only after fields, removals and additions have committed. */
+    public List<String> update(long eventId, BirdEventInput input, List<EventPhotoEntity> newPhotos,
+            List<String> removedPhotoPaths) {
         validateInput(input);
+        List<EventPhotoEntity> photos = List.copyOf(newPhotos);
+        List<String> removals = List.copyOf(removedPhotoPaths);
         if (eventId < 1) {
             throw new IllegalArgumentException("El registro que quieres editar no es válido.");
         }
@@ -520,7 +540,7 @@ public class BirdEventRepository {
         }
 
         try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
-            databaseAccess.withOrm(source ->
+            return databaseAccess.withOrm(source ->
                     TransactionManager.callInTransaction(source, () -> {
                         Dao<BirdEntity, Long> birds = birdDao(source);
                         Dao<BirdEventEntity, Long> events = eventDao(source);
@@ -550,7 +570,9 @@ public class BirdEventRepository {
                         birds.update(bird);
                         event.apply(input);
                         events.update(event);
-                        return null;
+                        List<String> removed = removePhotos(source, eventId, removals);
+                        insertPhotos(source, eventId, photos);
+                        return removed;
                     })
             );
         } catch (SQLException exception) {
@@ -559,6 +581,41 @@ public class BirdEventRepository {
                 throw validation;
             }
             throw databaseError("Error actualizando el evento", exception);
+        }
+    }
+
+    private List<String> removePhotos(ConnectionSource source, long eventId, List<String> paths)
+            throws SQLException {
+        if (paths.isEmpty()) return List.of();
+        Dao<EventPhotoEntity, Long> dao = photoDao(source);
+        List<EventPhotoEntity> owned = new ArrayList<>(dao.queryForEq(EventPhotoEntity.EVENT_ID, eventId));
+        List<String> removed = new ArrayList<>();
+        for (String path : paths) {
+            java.nio.file.Path requested = java.nio.file.Path.of(path).toAbsolutePath().normalize();
+            EventPhotoEntity match = owned.stream()
+                    .filter(photo -> mediaResolver.resolveEventPhoto(photo.filePath()).equals(requested))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                            "La foto ya no pertenece a este registro. Vuelve a abrirlo antes de guardar."));
+            dao.delete(match);
+            owned.remove(match);
+            removed.add(match.filePath());
+        }
+        return List.copyOf(removed);
+    }
+
+    private void insertPhotos(ConnectionSource source, long eventId, List<EventPhotoEntity> photos)
+            throws SQLException {
+        if (photos.isEmpty()) return;
+        Dao<EventPhotoEntity, Long> dao = photoDao(source);
+        for (EventPhotoEntity photo : photos) {
+            // Validates the managed-reference contract; files have already been staged and published.
+            mediaResolver.resolveEventPhoto(photo.filePath());
+            var duplicate = dao.queryBuilder();
+            duplicate.where().eq(EventPhotoEntity.EVENT_ID, eventId)
+                    .and().eq("content_sha256", photo.getContentSha256());
+            if (duplicate.queryForFirst() != null) continue;
+            photo.setEventId(eventId);
+            dao.create(photo);
         }
     }
 

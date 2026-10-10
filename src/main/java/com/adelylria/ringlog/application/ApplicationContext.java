@@ -7,6 +7,7 @@ import com.adelylria.ringlog.database.DatabaseAccess;
 import com.adelylria.ringlog.database.ReadOnlyDatabaseAccess;
 import com.adelylria.ringlog.database.WritableDatabaseAccess;
 import com.adelylria.ringlog.importexport.service.ConflictResolutionService;
+import com.adelylria.ringlog.media.EventPhotoService;
 import com.adelylria.ringlog.preferences.ApplicationPreferences;
 import com.adelylria.ringlog.storage.AppPaths;
 import com.adelylria.ringlog.storage.DataPaths;
@@ -59,7 +60,8 @@ public final class ApplicationContext {
                         ImportExportController.application(paths, mutations),
                         new ConflictResolutionService(
                                 paths.databasePath().toString(), mutations
-                        )
+                        ),
+                        new EventPhotoService(paths, mutations)
                 )
         );
     }

@@ -1,14 +1,18 @@
 package com.adelylria.ringlog;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.sql.SQLException;
 
 import javax.swing.SwingUtilities;
 
 import com.adelylria.ringlog.application.ApplicationContext;
 import com.adelylria.ringlog.application.ApplicationMode;
+import com.adelylria.ringlog.database.DatabaseUpgradeException;
 import com.adelylria.ringlog.diagnostics.LoggingInitialization;
 import com.adelylria.ringlog.diagnostics.RingLogLogging;
 import com.adelylria.ringlog.diagnostics.SafeLog;
+import com.adelylria.ringlog.portable.PortableCopyException;
 import com.adelylria.ringlog.portable.PortableStorageBootstrap;
 import com.adelylria.ringlog.preferences.ApplicationPreferences;
 import com.adelylria.ringlog.storage.AppPaths;
@@ -65,7 +69,7 @@ public class RingLog {
                     frame.setVisible(true);
                 }
             });
-        } catch (Exception exception) {
+        } catch (DatabaseUpgradeException | PortableCopyException | IOException | SQLException exception) {
             SafeLog.failure("startup", exception);
             Path logFile = requestedLog;
             SwingUtilities.invokeLater(() -> {

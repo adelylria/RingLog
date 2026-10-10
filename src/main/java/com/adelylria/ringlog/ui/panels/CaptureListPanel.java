@@ -49,6 +49,7 @@ import com.adelylria.ringlog.ui.components.CalendarDatePicker;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.NavigationIcon;
 import com.adelylria.ringlog.ui.components.TimelineView;
+import com.adelylria.ringlog.ui.components.WrappingPanel;
 import com.adelylria.ringlog.ui.theme.SurfacePanel;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
@@ -251,6 +252,7 @@ public class CaptureListPanel extends JPanel {
 
     private JPanel createFilters() {
         SurfacePanel filters = new SurfacePanel(new BorderLayout(0, 10));
+        filters.setName("recordFilters");
         filters.setBorder(new com.adelylria.ringlog.ui.theme.RoundedBorder(
                 null,
                 18,
@@ -267,7 +269,8 @@ public class CaptureListPanel extends JPanel {
         searchRow.add(searchField, BorderLayout.CENTER);
         searchRow.add(statusLabel, BorderLayout.EAST);
 
-        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        JPanel controls = new WrappingPanel(10, 8);
+        controls.setName("primaryFilterRow");
         controls.setOpaque(false);
         typeCombo.setPreferredSize(new java.awt.Dimension(170, 38));
         speciesCombo.setPreferredSize(new java.awt.Dimension(210, 38));
@@ -276,34 +279,33 @@ public class CaptureListPanel extends JPanel {
         controls.add(typeCombo);
         controls.add(speciesCombo);
         controls.add(placeCombo);
-        controls.add(UiKit.muted("Orden"));
-        controls.add(dateSortOrderCombo);
+        JPanel order = new JPanel(new BorderLayout(10, 0));
+        order.setOpaque(false);
+        order.add(UiKit.muted("Orden"), BorderLayout.WEST);
+        order.add(dateSortOrderCombo, BorderLayout.CENTER);
+        controls.add(order);
 
-        JPanel dateControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        JPanel dateControls = new WrappingPanel(10, 8);
+        dateControls.setName("dateFilterRow");
         dateControls.setOpaque(false);
         dateModeCombo.setPreferredSize(new java.awt.Dimension(170, 38));
         datePeriodCombo.setPreferredSize(new java.awt.Dimension(210, 38));
         dayPicker.setPreferredSize(new java.awt.Dimension(210, 38));
         dayPicker.setVisible(false);
-        dateControls.add(UiKit.muted("Fecha"));
-        dateControls.add(dateModeCombo);
+        JPanel dateMode = new JPanel(new BorderLayout(10, 0));
+        dateMode.setOpaque(false);
+        dateMode.add(UiKit.muted("Fecha"), BorderLayout.WEST);
+        dateMode.add(dateModeCombo, BorderLayout.CENTER);
+        dateControls.add(dateMode);
         dateControls.add(dayPicker);
         dateControls.add(datePeriodCombo);
         dateControls.add(clearFiltersButton);
+        dateControls.add(exportButton);
 
-        JPanel dateAndExport = new JPanel(new BorderLayout(10, 0));
-        dateAndExport.setOpaque(false);
-        dateAndExport.add(dateControls, BorderLayout.CENTER);
-        dateAndExport.add(exportButton, BorderLayout.EAST);
-
-        JPanel filterControls = new JPanel();
+        JPanel filterControls = new JPanel(new BorderLayout(0, 8));
         filterControls.setOpaque(false);
-        filterControls.setLayout(new BoxLayout(filterControls, BoxLayout.Y_AXIS));
-        controls.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        dateAndExport.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        filterControls.add(controls);
-        filterControls.add(Box.createVerticalStrut(8));
-        filterControls.add(dateAndExport);
+        filterControls.add(controls, BorderLayout.NORTH);
+        filterControls.add(dateControls, BorderLayout.CENTER);
 
         filters.add(searchRow, BorderLayout.NORTH);
         filters.add(filterControls, BorderLayout.CENTER);

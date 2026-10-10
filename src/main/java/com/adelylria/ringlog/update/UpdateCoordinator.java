@@ -26,6 +26,11 @@ public final class UpdateCoordinator {
     private final UpdateDownloadService downloads;
     private final UpdateArchitecture architecture;
     private final SemanticVersion currentVersion;
+    private java.util.function.BooleanSupplier beforeInstall = () -> true;
+
+    public void setBeforeInstall(java.util.function.BooleanSupplier beforeInstall) {
+        this.beforeInstall = Objects.requireNonNull(beforeInstall);
+    }
 
     private UpdateCoordinator(
             UpdateOverlay overlay,
@@ -172,6 +177,10 @@ public final class UpdateCoordinator {
     }
 
     private void beginDownload(UpdateAsset asset) {
+        if (!beforeInstall.getAsBoolean()) {
+            overlay.hideOverlay();
+            return;
+        }
         overlay.showDownloading(asset.size());
         downloads.download(
                 asset,

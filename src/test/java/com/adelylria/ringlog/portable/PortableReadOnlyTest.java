@@ -86,7 +86,7 @@ public final class PortableReadOnlyTest {
             require(context.mode() == ApplicationMode.PORTABLE_READ_ONLY,
                     "Portable context must expose the portable application mode");
             require(context.mutationServices().isEmpty(),
-                    "Portable context must not construct import or conflict mutation services");
+                    "Portable context must not construct import, conflict or photo mutation services");
             require(capabilities.readOnly()
                             && !capabilities.mutateDiary()
                             && !capabilities.manageCatalogs()
