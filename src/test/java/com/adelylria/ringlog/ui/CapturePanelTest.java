@@ -213,6 +213,8 @@ public final class CapturePanelTest {
                 "Edad must still save the original EURING code field");
         require(savedInput.get().ringerInitials() == null,
                 "A new entry must not inherit hidden initials from the previously edited event");
+        require(savedInput.get().captureType() == null,
+                "A new entry must not inherit the hidden historical classification");
     }
 
     public static void editModeUsesTheFormAndKeepsHistoricalCatalogValues()
@@ -297,6 +299,8 @@ public final class CapturePanelTest {
                 "Saving should preserve coded and unknown values from the existing entry");
         require("AR".equals(editedInput.get().ringerInitials()),
                 "Removing the initials control must not erase historical initials on save");
+        require("RECAPTURE".equals(editedInput.get().captureType()),
+                "Removing the classification control must not erase historical values on save");
         require("5".equals(editedInput.get().ageEuringCode()),
                 "The relocated Edad control must remain editable");
         require("DEAD".equals(editedInput.get().birdCondition()) && !editedInput.get().dead(),

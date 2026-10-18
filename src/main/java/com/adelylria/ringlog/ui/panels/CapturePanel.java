@@ -70,7 +70,6 @@ public class CapturePanel extends JPanel {
     private final JComboBox<String> sexCombo;
     private final JComboBox<BirdStatusChoice> statusCombo;
     private final JComboBox<String> conditionCombo;
-    private final JComboBox<String> captureTypeCombo;
     private final DateSelector dateSelector;
     private final TimeSelector timeSelector;
     private final JTextField locationTextField;
@@ -93,6 +92,7 @@ public class CapturePanel extends JPanel {
     private final JPanel headerHolder;
     private Long editingEventId;
     private String preservedRingerInitials;
+    private String preservedCaptureType;
     private Long pendingSpeciesId;
     private Long pendingPlaceId;
     private SpeciesOption pendingSpeciesFallback;
@@ -159,7 +159,6 @@ public class CapturePanel extends JPanel {
         this.statusCombo = birdStatusCombo();
         this.statusCombo.setName("birdStatusField");
         this.conditionCombo = combo("Buen estado", "Regular", "Delicado", "Muerto");
-        this.captureTypeCombo = combo("Sin indicar", "Captura", "Recaptura");
         this.dateSelector = new DateSelector(LocalDate.now());
         this.timeSelector = new TimeSelector(LocalTime.now());
         this.locationTextField = new JTextField();
@@ -214,15 +213,13 @@ public class CapturePanel extends JPanel {
         page.add(headerHolder, BorderLayout.NORTH);
 
         JPanel form = UiKit.verticalScrollPanel();
-        form.add(createEssentialsSection());
+        form.add(createGeneralSection());
         form.add(Box.createVerticalStrut(14));
         form.add(createNotesSection());
         form.add(Box.createVerticalStrut(14));
         form.add(createBirdSection());
         form.add(Box.createVerticalStrut(14));
         form.add(createWeatherSection());
-        form.add(Box.createVerticalStrut(14));
-        form.add(createRegistrationSection());
 
         JPanel actions = new JPanel(new BorderLayout(16, 0));
         actions.setOpaque(false);
@@ -270,6 +267,7 @@ public class CapturePanel extends JPanel {
         if (photoEditor != null) photoEditor.reset(List.of());
         editingEventId = null;
         preservedRingerInitials = null;
+        preservedCaptureType = null;
         pendingSpeciesId = null;
         pendingPlaceId = null;
         pendingSpeciesFallback = null;
@@ -283,7 +281,6 @@ public class CapturePanel extends JPanel {
         resetCombo(sexCombo, "Sin indicar", "Macho", "Hembra");
         resetBirdStatusCombo("B0");
         resetCombo(conditionCombo, "Buen estado", "Regular", "Delicado", "Muerto");
-        resetCombo(captureTypeCombo, "Sin indicar", "Captura", "Recaptura");
         ageEuringCodeField.setText("");
         reproductiveField.setText("");
         moultIntensityField.setText("");
@@ -328,6 +325,7 @@ public class CapturePanel extends JPanel {
         editingEventId = detail.id();
         // No longer editable, but still part of the historical event and its exports.
         preservedRingerInitials = detail.ringerInitials();
+        preservedCaptureType = detail.captureType();
         pendingSpeciesId = detail.speciesId();
         pendingPlaceId = detail.placeId();
         pendingSpeciesFallback = detail.speciesId() < 1
@@ -355,7 +353,6 @@ public class CapturePanel extends JPanel {
         selectCode(sexCombo, detail.sexCode());
         selectBirdStatusCode(detail.status());
         selectCode(conditionCombo, detail.birdCondition());
-        selectCode(captureTypeCombo, detail.captureType());
         ageEuringCodeField.setText(text(detail.ageEuringCode()));
         reproductiveField.setText(text(detail.reproductiveStatus()));
         moultIntensityField.setText(text(detail.moultIntensity()));
@@ -415,14 +412,15 @@ public class CapturePanel extends JPanel {
         }
     }
 
-    private JPanel createEssentialsSection() {
+    private JPanel createGeneralSection() {
         JPanel panel = UiKit.sectionPanel();
-        panel.add(sectionHeading(
-                "Lo esencial",
-                "Identifica el ave y reutiliza un lugar ya guardado."
-        ), BorderLayout.NORTH);
+        panel.add(sectionHeading("Datos generales", null), BorderLayout.NORTH);
         JPanel grid = grid();
-        addField(grid, 0, "Tipo de registro *", eventTypeCombo);
+        JPanel eventType = new JPanel(new BorderLayout(12, 0));
+        eventType.setOpaque(false);
+        eventType.add(eventTypeCombo, BorderLayout.CENTER);
+        eventType.add(deadCheck, BorderLayout.EAST);
+        addField(grid, 0, "Tipo de registro *", eventType);
         addField(grid, 1, "Número de anilla *", ringNumberField);
         addField(grid, 2, "Fecha *", dateSelector);
         addField(grid, 3, "Hora", timeSelector);
@@ -461,9 +459,9 @@ public class CapturePanel extends JPanel {
         addNumber(measurements, "Ala", "wing");
         addNumber(measurements, "P3", "p3");
         addNumber(measurements, "Tarso", "torso");
-        addNumber(measurements, "Peso", "weight");
         addNumber(measurements, "Grasa", "fat");
         addNumber(measurements, "Músculo", "muscle");
+        addNumber(measurements, "Peso", "weight");
         JPanel lower = new JPanel(new BorderLayout(20, 0));
         lower.setOpaque(false);
         lower.setBorder(new javax.swing.border.EmptyBorder(15, 0, 0, 0));
@@ -513,26 +511,15 @@ public class CapturePanel extends JPanel {
         return panel;
     }
 
-    private JPanel createRegistrationSection() {
-        JPanel panel = UiKit.sectionPanel();
-        panel.add(sectionHeading(
-                "Datos de registro",
-                "Información administrativa para completar la ficha."
-        ), BorderLayout.NORTH);
-        JPanel grid = grid();
-        addField(grid, 0, "Clasificación histórica", captureTypeCombo);
-        addField(grid, 1, "Estado vital", deadCheck);
-        panel.add(grid, BorderLayout.CENTER);
-        return panel;
-    }
-
     private JPanel sectionHeading(String title, String description) {
         JPanel heading = new JPanel();
         heading.setOpaque(false);
         heading.setLayout(new BoxLayout(heading, BoxLayout.Y_AXIS));
         heading.add(UiKit.valueLabel(title));
-        heading.add(Box.createVerticalStrut(3));
-        heading.add(UiKit.muted(description));
+        if (description != null && !description.isBlank()) {
+            heading.add(Box.createVerticalStrut(3));
+            heading.add(UiKit.muted(description));
+        }
         return heading;
     }
 
@@ -913,7 +900,7 @@ public class CapturePanel extends JPanel {
                 rainField.getText().trim(),
                 thermalField.getText().trim(),
                 windField.getText().trim(),
-                captureTypeCode((String) captureTypeCombo.getSelectedItem()),
+                preservedCaptureType,
                 deadCheck.isSelected()
         );
     }
@@ -931,15 +918,6 @@ public class CapturePanel extends JPanel {
         return switch (UiKit.display(value)) {
             case "Macho" -> "M";
             case "Hembra" -> "F";
-            case "Sin indicar", "—" -> null;
-            default -> UiKit.display(value).toUpperCase(Locale.ROOT);
-        };
-    }
-
-    private static String captureTypeCode(String value) {
-        return switch (UiKit.display(value)) {
-            case "Captura" -> "CAPTURE";
-            case "Recaptura" -> "RECAPTURE";
             case "Sin indicar", "—" -> null;
             default -> UiKit.display(value).toUpperCase(Locale.ROOT);
         };
