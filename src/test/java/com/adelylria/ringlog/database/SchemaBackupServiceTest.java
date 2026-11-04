@@ -30,8 +30,8 @@ public final class SchemaBackupServiceTest {
             SchemaBackup backup = new SchemaBackupService().create(
                     paths,
                     paths.databasePath(),
-                    5,
-                    6,
+                    Database.SCHEMA_VERSION,
+                    Database.SCHEMA_VERSION + 1,
                     "1.0-test"
             );
 
@@ -47,7 +47,7 @@ public final class SchemaBackupServiceTest {
             try (Connection connection = Database.getReadOnlyConnection(
                     backup.database().toString()
             )) {
-                new DatabaseIntegrityValidator().requireValid(connection, 5);
+                new DatabaseIntegrityValidator().requireValid(connection, Database.SCHEMA_VERSION);
             }
 
             String manifest = Files.readString(backup.manifest(), StandardCharsets.UTF_8);
@@ -57,6 +57,9 @@ public final class SchemaBackupServiceTest {
                     )), "The manifest must contain only the six approved technical keys");
             require(manifest.contains("\"sha256\": \"" + backup.sha256() + "\""),
                     "The manifest SHA-256 must match the snapshot");
+            require(manifest.contains("\"fromSchema\": " + Database.SCHEMA_VERSION)
+                            && manifest.contains("\"targetSchema\": " + (Database.SCHEMA_VERSION + 1)),
+                    "The manifest must describe the actual current schema and requested target");
             require(manifest.contains("\"databaseFile\": \""
                             + backup.database().getFileName() + "\""),
                     "The manifest must reference only the backup file name");
@@ -75,8 +78,8 @@ public final class SchemaBackupServiceTest {
             requireFailure(() -> new SchemaBackupService().create(
                     paths,
                     paths.databasePath(),
-                    5,
-                    6,
+                    Database.SCHEMA_VERSION,
+                    Database.SCHEMA_VERSION + 1,
                     "1.0-test"
             ), "An invalid SQLite source must not produce a schema backup");
 

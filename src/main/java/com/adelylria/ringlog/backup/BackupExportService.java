@@ -1,6 +1,6 @@
 package com.adelylria.ringlog.backup;
 
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -17,11 +17,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.Deflater;
 
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.Cell;
@@ -31,9 +33,16 @@ import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.HorizontalAlignment;
 import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.RichTextString;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xssf.model.SharedStringsTable;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import org.apache.poi.xssf.streaming.SheetDataWriter;
+import org.apache.poi.xssf.usermodel.XSSFRichTextString;
+import org.apache.commons.compress.archivers.zip.Zip64Mode;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
 
 import com.adelylria.ringlog.database.Database;
 import com.adelylria.ringlog.importer.ImportPreview;
@@ -45,6 +54,7 @@ import com.adelylria.ringlog.storage.MediaPathResolver;
 public final class BackupExportService {
 
     private static final int BASE64_CHUNK_SIZE = 30_000;
+    private static final int BASE64_CHUNK_BYTES = (BASE64_CHUNK_SIZE / 4) * 3;
     private static final int TEXT_CHUNK_SIZE = 30_000;
     private static final int MAX_EXCEL_ROWS = 1_048_576;
     private static final int MAX_PHOTOS = 5_000;
@@ -76,8 +86,9 @@ public final class BackupExportService {
             "bird_condition", "return_status", "wing", "p3", "torso", "weight",
             "observations", "clouds", "rain", "thermal_sensation", "wind",
             "capture_type", "is_dead", "source_name", "source_reference",
-            "source_aliases", "created_at", "updated_at"
+            "source_aliases", "created_at", "updated_at", "capture_method_stable_key"
     };
+    private static final String[] CAPTURE_METHOD_HEADERS = {"stable_key", "name", "active"};
     private static final String[] PHOTO_HEADERS = {
             "event_key", "file_name", "file_path", "mime_type", "source_reference",
             "photo_key", "sha256", "created_at"
@@ -124,28 +135,22 @@ public final class BackupExportService {
             throw new BackupExportException("Selecciona dónde guardar la copia.");
         }
         Path output = xlsxPath(destination.toAbsolutePath().normalize());
-        Path parent = output.getParent();
         Path temporary = null;
         try {
             Database.validate(databaseFile);
-            BackupData data = readBackupData();
-            Files.createDirectories(parent);
-            temporary = Files.createTempFile(
-                    parent,
-                    "." + output.getFileName() + ".",
-                    ".tmp"
-            );
-            writeWorkbook(temporary, data);
-            validateWrittenWorkbook(temporary, data);
+            PreparedBackup prepared = prepareBackup(output);
+            temporary = prepared.file();
+            BackupCounts counts = prepared.counts();
+            validateWrittenWorkbook(temporary, counts);
             replaceAtomically(temporary, output);
             temporary = null;
             return new BackupExportResult(
                     output,
-                    data.species().size(),
-                    data.birds().size(),
-                    data.places().size(),
-                    data.events().size(),
-                    data.photos().size()
+                    counts.species(),
+                    counts.birds(),
+                    counts.places(),
+                    counts.events(),
+                    counts.photos()
             );
         } catch (BackupExportException exception) {
             throw exception;
@@ -172,6 +177,32 @@ public final class BackupExportService {
         }
     }
 
+    private PreparedBackup prepareBackup(Path output)
+            throws SQLException, IOException, BackupExportException {
+        BackupData data = readBackupData();
+        Path temporary = null;
+        try {
+            Files.createDirectories(output.getParent());
+            temporary = Files.createTempFile(output.getParent(), "." + output.getFileName() + ".", ".tmp");
+            writeWorkbook(temporary, data);
+            BackupCounts counts = new BackupCounts(data.species().size(), data.birds().size(),
+                    data.places().size(), data.events().size(), data.photos().size());
+            PreparedBackup prepared = new PreparedBackup(temporary, counts);
+            temporary = null;
+            // Returning only the path and counts releases the snapshot, including photo bytes,
+            // before validation opens and materializes a second representation of the workbook.
+            return prepared;
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException ignored) {
+                    // Preserve the original write failure.
+                }
+            }
+        }
+    }
+
     private BackupData readBackupData()
             throws SQLException, IOException, BackupExportException {
         try (Connection connection = Database.getConnection(databaseFile)) {
@@ -180,6 +211,7 @@ public final class BackupExportService {
                 List<Object[]> species = readSpecies(connection);
                 List<Object[]> birds = readBirds(connection);
                 List<Object[]> places = readPlaces(connection);
+                List<Object[]> captureMethods = readCaptureMethods(connection);
                 EventExport events = readEvents(connection);
                 List<PhotoExport> photos = readPhotos(
                         connection,
@@ -187,7 +219,7 @@ public final class BackupExportService {
                         events.references()
                 );
                 connection.rollback();
-                return new BackupData(species, birds, places, events.rows(), photos);
+                return new BackupData(species, birds, places, events.rows(), photos, captureMethods);
             } catch (SQLException | IOException | BackupExportException exception) {
                 rollback(connection, exception);
                 throw exception;
@@ -269,16 +301,30 @@ public final class BackupExportService {
         return List.copyOf(rows);
     }
 
+    private List<Object[]> readCaptureMethods(Connection connection) throws SQLException {
+        List<Object[]> rows = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(
+                     "SELECT stable_key, name, active FROM capture_method ORDER BY stable_key")) {
+            while (result.next()) {
+                rows.add(new Object[]{result.getString(1), result.getString(2), result.getInt(3)});
+            }
+        }
+        return List.copyOf(rows);
+    }
+
     private EventExport readEvents(Connection connection) throws SQLException {
         List<Object[]> rows = new ArrayList<>();
         Map<Long, String> keys = new HashMap<>();
         Map<Long, String> references = new HashMap<>();
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("""
-                     SELECT e.*, b.ring_number, p.stable_key AS place_stable_key
+                     SELECT e.*, b.ring_number, p.stable_key AS place_stable_key,
+                            cm.stable_key AS capture_method_stable_key
                      FROM bird_event e
                      JOIN bird b ON b.id = e.bird_id
                      LEFT JOIN place p ON p.id = e.place_id
+                     LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
                      ORDER BY e.id
                      """)) {
             while (result.next()) {
@@ -327,7 +373,8 @@ public final class BackupExportService {
                         reference,
                         null,
                         result.getString("created_at"),
-                        result.getString("updated_at")
+                        result.getString("updated_at"),
+                        result.getString("capture_method_stable_key")
                 });
             }
         }
@@ -422,30 +469,24 @@ public final class BackupExportService {
 
     private static byte[] readPhotoBytes(Path source, long expectedSize)
             throws IOException {
-        ByteArrayOutputStream content = new ByteArrayOutputStream(
-                Math.toIntExact(expectedSize)
-        );
+        if (expectedSize < 0 || expectedSize > MAX_PHOTO_BYTES) {
+            throw new IOException("La foto supera el tamaño máximo de una copia en Excel.");
+        }
+        byte[] content = new byte[Math.toIntExact(expectedSize)];
         try (InputStream input = Files.newInputStream(source)) {
-            byte[] buffer = new byte[16_384];
-            long total = 0;
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                total += read;
-                if (total > expectedSize || total > MAX_PHOTO_BYTES) {
-                    throw new IOException("La foto cambió mientras se preparaba la copia.");
-                }
-                content.write(buffer, 0, read);
-            }
-            if (total != expectedSize) {
+            int total = input.readNBytes(content, 0, content.length);
+            if (total != content.length || input.read() != -1) {
                 throw new IOException("La foto cambió mientras se preparaba la copia.");
             }
         }
-        return content.toByteArray();
+        return content;
     }
 
     private void writeWorkbook(Path destination, BackupData data)
             throws IOException, BackupExportException {
-        try (Workbook workbook = new XSSFWorkbook()) {
+        // A bounded row window avoids retaining every workbook cell in memory.
+        // POI closes/disposes the temporary sheet files on both success and failure.
+        try (SXSSFWorkbook workbook = new BackupWorkbook()) {
             WorkbookStyles styles = new WorkbookStyles(workbook);
             TextStore textStore = new TextStore();
             Map<String, String> metadata = new LinkedHashMap<>();
@@ -457,6 +498,7 @@ public final class BackupExportService {
             metadata.put("birds_count", Integer.toString(data.birds().size()));
             metadata.put("places_count", Integer.toString(data.places().size()));
             metadata.put("events_count", Integer.toString(data.events().size()));
+            metadata.put("capture_methods_count", Integer.toString(data.captureMethods().size()));
             metadata.put("photos_count", Integer.toString(data.photos().size()));
             metadata.put("warnings_count", "0");
             List<Object[]> metadataRows = metadata.entrySet().stream()
@@ -471,6 +513,8 @@ public final class BackupExportService {
                     data.birds());
             writeSheet(workbook, styles, textStore, "places", PLACE_HEADERS,
                     data.places());
+            writeSheet(workbook, styles, textStore, "capture_methods", CAPTURE_METHOD_HEADERS,
+                    data.captureMethods());
             writeSheet(workbook, styles, textStore, "events", EVENT_HEADERS,
                     data.events());
             writeSheet(workbook, styles, textStore, "photos", PHOTO_HEADERS,
@@ -484,7 +528,7 @@ public final class BackupExportService {
             workbook.setSheetHidden(contentIndex, true);
             workbook.setSheetHidden(workbook.getSheetIndex("text_content"), true);
             workbook.setActiveSheet(workbook.getSheetIndex("metadata"));
-            try (OutputStream output = Files.newOutputStream(destination)) {
+            try (OutputStream output = new BufferedOutputStream(Files.newOutputStream(destination), 64 * 1024)) {
                 workbook.write(output);
             }
         }
@@ -513,29 +557,33 @@ public final class BackupExportService {
         int rowIndex = 1;
         long totalBase64Characters = 0;
         for (PhotoExport photo : photos) {
-            String base64 = Base64.getEncoder().encodeToString(photo.content());
-            totalBase64Characters += base64.length();
-            if (base64.length() > MAX_PHOTO_BASE64_CHARACTERS
+            byte[] content = photo.content();
+            long encodedLength = 4L * ((content.length + 2L) / 3L);
+            totalBase64Characters += encodedLength;
+            if (encodedLength > MAX_PHOTO_BASE64_CHARACTERS
                     || totalBase64Characters > MAX_TOTAL_BASE64_CHARACTERS) {
                 throw new BackupExportException(
                         "Las fotos superan el tamaño máximo de una copia en Excel."
                 );
             }
-            int chunks = Math.max(1, (base64.length() + BASE64_CHUNK_SIZE - 1)
-                    / BASE64_CHUNK_SIZE);
+            int chunks = Math.max(1, Math.toIntExact((encodedLength + BASE64_CHUNK_SIZE - 1)
+                    / BASE64_CHUNK_SIZE));
             if ((long) rowIndex + chunks > MAX_EXCEL_ROWS) {
                 throw new BackupExportException(
                         "Las fotos son demasiado grandes para guardarlas en un único Excel."
                 );
             }
             for (int chunk = 0; chunk < chunks; chunk++) {
-                int start = chunk * BASE64_CHUNK_SIZE;
-                int end = Math.min(base64.length(), start + BASE64_CHUNK_SIZE);
+                int start = chunk * BASE64_CHUNK_BYTES;
+                int end = Math.min(content.length, start + BASE64_CHUNK_BYTES);
+                // A full byte chunk is divisible by three, so concatenation has exactly the
+                // same padding and 30,000-character boundaries as encoding the entire image.
+                String base64 = Base64.getEncoder().encodeToString(Arrays.copyOfRange(content, start, end));
                 Row row = sheet.createRow(rowIndex++);
                 setRawCell(row, 0, photo.photoKey(), styles.body());
                 setRawCell(row, 1, chunk, styles.body());
                 setRawCell(row, 2, chunks, styles.body());
-                setRawCell(row, 3, base64.substring(start, end), styles.body());
+                setRawCell(row, 3, base64, styles.body());
             }
         }
     }
@@ -609,11 +657,13 @@ public final class BackupExportService {
     ) {
         Sheet sheet = workbook.createSheet(name);
         writeHeader(sheet, styles, headers);
+        ColumnWidths widths = new ColumnWidths(headers);
         int rowIndex = 1;
         for (Object[] values : rows) {
             Row row = sheet.createRow(rowIndex++);
             for (int column = 0; column < values.length; column++) {
-                setCell(row, column, values[column], styles.body(), textStore);
+                Object stored = setCell(row, column, values[column], styles.body(), textStore);
+                widths.include(column, stored);
             }
         }
         sheet.createFreezePane(0, 1);
@@ -625,11 +675,7 @@ public final class BackupExportService {
                     headers.length - 1
             ));
         }
-        for (int column = 0; column < headers.length; column++) {
-            sheet.autoSizeColumn(column);
-            int width = Math.min(sheet.getColumnWidth(column) + 512, 18_000);
-            sheet.setColumnWidth(column, Math.max(width, 2_800));
-        }
+        widths.apply(sheet);
     }
 
     private void writeHeader(Sheet sheet, WorkbookStyles styles, String[] headers) {
@@ -640,7 +686,7 @@ public final class BackupExportService {
         }
     }
 
-    private void setCell(
+    private Object setCell(
             Row row,
             int column,
             Object value,
@@ -655,6 +701,7 @@ public final class BackupExportService {
             stored = textStore.reference(string);
         }
         setRawCell(row, column, stored, style);
+        return stored;
     }
 
     private void setRawCell(Row row, int column, Object value, CellStyle style) {
@@ -669,18 +716,18 @@ public final class BackupExportService {
         cell.setCellStyle(style);
     }
 
-    private void validateWrittenWorkbook(Path workbookFile, BackupData expected)
+    private void validateWrittenWorkbook(Path workbookFile, BackupCounts expected)
             throws BackupExportException {
         try {
             ImportPreview preview = new LegacyImportService(
                     databaseFile,
                     workbookFile.getParent().resolve(".ringlog-backup-validation")
             ).preview(workbookFile);
-            if (preview.speciesCount() != expected.species().size()
-                    || preview.birdsCount() != expected.birds().size()
-                    || preview.placesCount() != expected.places().size()
-                    || preview.eventsCount() != expected.events().size()
-                    || preview.photosCount() != expected.photos().size()) {
+            if (preview.speciesCount() != expected.species()
+                    || preview.birdsCount() != expected.birds()
+                    || preview.placesCount() != expected.places()
+                    || preview.eventsCount() != expected.events()
+                    || preview.photosCount() != expected.photos()) {
                 throw new BackupExportException(
                         "La copia generada no coincide con los datos de RingLog."
                 );
@@ -771,8 +818,15 @@ public final class BackupExportService {
             List<Object[]> birds,
             List<Object[]> places,
             List<Object[]> events,
-            List<PhotoExport> photos
+            List<PhotoExport> photos,
+            List<Object[]> captureMethods
     ) {
+    }
+
+    private record BackupCounts(int species, int birds, int places, int events, int photos) {
+    }
+
+    private record PreparedBackup(Path file, BackupCounts counts) {
     }
 
     private record EventExport(
@@ -792,13 +846,124 @@ public final class BackupExportService {
             String createdAt,
             byte[] content
     ) {
-        private PhotoExport {
-            content = content.clone();
+        // This private snapshot owns the freshly read bytes; they never escape the exporter
+        // and are never mutated. Defensive copies here would duplicate the entire photo set.
+    }
+
+    private static final class BackupWorkbook extends SXSSFWorkbook {
+        private BackupWorkbook() {
+            super(null, 128, false, true);
+            setZip64Mode(Zip64Mode.AsNeeded);
         }
 
         @Override
-        public byte[] content() {
-            return content.clone();
+        protected SheetDataWriter createSheetDataWriter() throws IOException {
+            SharedStringsTable sharedStrings = getXSSFWorkbook().getSharedStringSource();
+            return new SheetDataWriter(new SharedStringsTable() {
+                @Override
+                public int addSharedStringItem(RichTextString value) {
+                    // All exporter cells use plain strings. getString() would decode literal
+                    // _xNNNN_ input before we can protect it; encode the original XML text.
+                    String raw = ((XSSFRichTextString) value).getCTRst().getT();
+                    return sharedStrings.addSharedStringItem(new XSSFRichTextString(spreadsheetText(raw)));
+                }
+            });
+        }
+
+        @Override
+        @SuppressWarnings("deprecation") // Commons Compress exposes the stream's shared deflater here.
+        protected ZipArchiveOutputStream createArchiveOutputStream(OutputStream output) {
+            ZipArchiveOutputStream archive = new ZipArchiveOutputStream(output) {
+                @Override
+                public void putArchiveEntry(ZipArchiveEntry entry) throws IOException {
+                    // Repeated text and SpreadsheetML control escapes can legitimately exceed
+                    // the reader's ZIP inflation ratio. Huffman coding keeps the normal safety
+                    // checks effective without LZ77 expanding this one part by hundreds of times.
+                    def.setStrategy("xl/sharedStrings.xml".equals(entry.getName())
+                            ? Deflater.HUFFMAN_ONLY : Deflater.DEFAULT_STRATEGY);
+                    super.putArchiveEntry(entry);
+                }
+            };
+            archive.setUseZip64(Zip64Mode.AsNeeded);
+            return archive;
+        }
+    }
+
+    /** Protect literal SpreadsheetML escapes and XML-invalid UTF-16 before serializing shared strings. */
+    private static String spreadsheetText(String value) {
+        StringBuilder escaped = null;
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            boolean literalEscape = character == '_' && index + 6 < value.length()
+                    && value.charAt(index + 1) == 'x' && value.charAt(index + 6) == '_'
+                    && hex(value.charAt(index + 2)) && hex(value.charAt(index + 3))
+                    && hex(value.charAt(index + 4)) && hex(value.charAt(index + 5));
+            boolean unpaired = Character.isHighSurrogate(character)
+                    ? index + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(index + 1))
+                    : Character.isLowSurrogate(character)
+                            && (index == 0 || !Character.isHighSurrogate(value.charAt(index - 1)));
+            boolean invalidXml = character < 0x20 && character != '\t' && character != '\n' && character != '\r'
+                    || character == 0xfffe || character == 0xffff || unpaired;
+            if ((literalEscape || invalidXml) && escaped == null) {
+                escaped = new StringBuilder(value.length() + 16).append(value, 0, index);
+            }
+            if (escaped != null) {
+                if (literalEscape || invalidXml) {
+                    escaped.append("_x");
+                    for (int shift = 12; shift >= 0; shift -= 4) {
+                        escaped.append("0123456789ABCDEF".charAt((character >>> shift) & 0xf));
+                    }
+                    escaped.append('_');
+                } else {
+                    escaped.append(character);
+                }
+            }
+        }
+        return escaped == null ? value : escaped.toString();
+    }
+
+    private static boolean hex(char character) {
+        return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'
+                || character >= 'A' && character <= 'F';
+    }
+
+    private static final class ColumnWidths {
+        private static final int MINIMUM = 2_800;
+        private static final int MAXIMUM = 18_000;
+        private static final int MAX_CHARACTERS = (MAXIMUM - 512 + 255) / 256;
+        private final int[] characters;
+
+        private ColumnWidths(String[] headers) {
+            characters = new int[headers.length];
+            for (int column = 0; column < headers.length; column++) include(column, headers[column]);
+        }
+
+        private void include(int column, Object value) {
+            if (column >= characters.length || value == null || characters[column] >= MAX_CHARACTERS) return;
+            String text = value.toString();
+            int current = 0;
+            int longest = 0;
+            for (int offset = 0; offset < text.length();) {
+                int codePoint = text.codePointAt(offset);
+                if (codePoint == '\n' || codePoint == '\r') {
+                    longest = Math.max(longest, current);
+                    current = 0;
+                } else {
+                    current += codePoint == '\t' ? 4 : Character.isSupplementaryCodePoint(codePoint) ? 2 : 1;
+                    if (current >= MAX_CHARACTERS) {
+                        longest = MAX_CHARACTERS;
+                        break;
+                    }
+                }
+                offset += Character.charCount(codePoint);
+            }
+            characters[column] = Math.max(characters[column], Math.max(longest, current));
+        }
+
+        private void apply(Sheet sheet) {
+            for (int column = 0; column < characters.length; column++) {
+                sheet.setColumnWidth(column, Math.max(MINIMUM, Math.min(MAXIMUM, characters[column] * 256 + 512)));
+            }
         }
     }
 

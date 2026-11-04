@@ -1,25 +1,30 @@
 package com.adelylria.ringlog.report;
 
 import java.awt.Color;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import com.adelylria.ringlog.model.view.BirdEventReportRow;
@@ -44,9 +49,10 @@ final class PdfRecordReportWriter {
             List<String> filters,
         LocalDateTime generatedAt
     ) throws IOException {
-        try (PDDocument document = new PDDocument()) {
-            PDFont regular = loadRegularFont(document);
-            PDFont bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        try (PDDocument document = new PDDocument();
+                FontMetrics regular = new FontMetrics(document, loadRegularFont(document));
+                FontMetrics bold = new FontMetrics(document,
+                        new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD))) {
             List<String> footerLabels = new ArrayList<>();
 
             configureMetadata(document, records.size(), generatedAt);
@@ -122,8 +128,8 @@ final class PdfRecordReportWriter {
 
     private static void addCover(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             List<BirdEventReportRow> records,
             List<String> filters,
             LocalDateTime generatedAt
@@ -231,8 +237,8 @@ final class PdfRecordReportWriter {
 
     private static void coverCard(
             PDPageContentStream content,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             float x,
             float bottom,
             float width,
@@ -248,8 +254,8 @@ final class PdfRecordReportWriter {
 
     private static void addRecordPages(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords
@@ -306,8 +312,8 @@ final class PdfRecordReportWriter {
 
     private static void addMainRecordPage(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords,
@@ -421,7 +427,8 @@ final class PdfRecordReportWriter {
                 field("Nombre científico", record.speciesScientificName()),
                 field("Nombre común", record.speciesCommonName()),
                 field("Archivo de origen", record.sourceName()),
-                field("Referencia origen", record.sourceReference())
+                field("Referencia origen", record.sourceReference()),
+                field("Método de captura", record.captureMethod())
         );
     }
 
@@ -440,7 +447,7 @@ final class PdfRecordReportWriter {
     }
 
     private static List<Field> overflowFields(
-            PDFont regular,
+            FontMetrics regular,
             BirdEventReportRow record
     ) throws IOException {
         java.util.LinkedHashMap<String, Field> overflow = new java.util.LinkedHashMap<>();
@@ -485,7 +492,7 @@ final class PdfRecordReportWriter {
 
     private static void addIfOverflow(
             java.util.LinkedHashMap<String, Field> overflow,
-            PDFont font,
+            FontMetrics font,
             float size,
             float maximumWidth,
             Field field
@@ -499,8 +506,8 @@ final class PdfRecordReportWriter {
 
     private static void addCompleteFieldPages(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords,
@@ -538,8 +545,8 @@ final class PdfRecordReportWriter {
 
     private static void addCompleteFieldPage(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords,
@@ -587,8 +594,8 @@ final class PdfRecordReportWriter {
 
     private static void addNotesContinuationPage(
             PDDocument document,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords,
@@ -622,8 +629,8 @@ final class PdfRecordReportWriter {
 
     private static void recordHeader(
             PDPageContentStream content,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             BirdEventReportRow record,
             int recordIndex,
             int totalRecords
@@ -655,8 +662,8 @@ final class PdfRecordReportWriter {
 
     private static void topBrand(
             PDPageContentStream content,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             int recordIndex,
             int totalRecords
     ) throws IOException {
@@ -675,8 +682,8 @@ final class PdfRecordReportWriter {
 
     private static void drawFieldCard(
             PDPageContentStream content,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             float x,
             float bottom,
             float width,
@@ -707,8 +714,8 @@ final class PdfRecordReportWriter {
 
     private static void drawGridCard(
             PDPageContentStream content,
-            PDFont regular,
-            PDFont bold,
+            FontMetrics regular,
+            FontMetrics bold,
             float x,
             float bottom,
             float width,
@@ -742,7 +749,7 @@ final class PdfRecordReportWriter {
 
     private static void appendFooters(
             PDDocument document,
-            PDFont regular,
+            FontMetrics regular,
             List<String> labels
     ) throws IOException {
         int totalPages = document.getNumberOfPages();
@@ -820,7 +827,7 @@ final class PdfRecordReportWriter {
 
     private static void text(
             PDPageContentStream content,
-            PDFont font,
+            FontMetrics font,
             float size,
             Color color,
             float x,
@@ -828,16 +835,16 @@ final class PdfRecordReportWriter {
             String value
     ) throws IOException {
         content.beginText();
-        content.setFont(font, size);
+        content.setFont(font.font, size);
         content.setNonStrokingColor(color);
         content.newLineAtOffset(x, y);
-        content.showText(supportedText(font, RecordReportText.display(value)));
+        font.showText(content, supportedText(font, RecordReportText.display(value)));
         content.endText();
     }
 
     private static void rightText(
             PDPageContentStream content,
-            PDFont font,
+            FontMetrics font,
             float size,
             Color color,
             float right,
@@ -851,7 +858,7 @@ final class PdfRecordReportWriter {
 
     private static void fittedText(
             PDPageContentStream content,
-            PDFont font,
+            FontMetrics font,
             float size,
             Color color,
             float x,
@@ -860,38 +867,41 @@ final class PdfRecordReportWriter {
             float maximumWidth
     ) throws IOException {
         String safe = supportedText(font, RecordReportText.display(value));
+        float width = font.widthUnits(safe) / 1000f;
         float adjusted = size;
-        while (adjusted > 6.8f && textWidth(font, adjusted, safe) > maximumWidth) {
+        while (adjusted > 6.8f && width * adjusted > maximumWidth) {
             adjusted -= 0.3f;
         }
-        if (textWidth(font, adjusted, safe) > maximumWidth) {
+        if (width * adjusted > maximumWidth) {
             safe = ellipsize(font, adjusted, safe, maximumWidth);
         }
         text(content, font, adjusted, color, x, y, safe);
     }
 
     private static String ellipsize(
-            PDFont font,
+            FontMetrics font,
             float size,
             String value,
             float maximumWidth
     ) throws IOException {
         String suffix = "...";
         StringBuilder result = new StringBuilder();
+        float width = 0;
         for (int offset = 0; offset < value.length();) {
             int codePoint = value.codePointAt(offset);
-            String next = result + new String(Character.toChars(codePoint)) + suffix;
-            if (textWidth(font, size, next) > maximumWidth) {
+            float candidateWidth = width + font.advance(codePoint);
+            if (font.appendWidth(candidateWidth, suffix) / 1000f * size > maximumWidth) {
                 break;
             }
             result.appendCodePoint(codePoint);
+            width = candidateWidth;
             offset += Character.charCount(codePoint);
         }
         return result + suffix;
     }
 
     private static List<String> wrap(
-            PDFont font,
+            FontMetrics font,
             float size,
             String value,
             float maximumWidth
@@ -905,11 +915,17 @@ final class PdfRecordReportWriter {
                 continue;
             }
             StringBuilder line = new StringBuilder();
+            float lineWidth = 0;
             for (String word : paragraph.trim().split("\\s+")) {
-                String candidate = line.isEmpty() ? word : line + " " + word;
-                if (textWidth(font, size, candidate) <= maximumWidth) {
-                    line.setLength(0);
-                    line.append(candidate);
+                float candidateWidth = line.isEmpty()
+                        ? font.widthUnits(word)
+                        : font.appendWidth(lineWidth + font.advance(' '), word);
+                if (candidateWidth / 1000f * size <= maximumWidth) {
+                    if (!line.isEmpty()) {
+                        line.append(' ');
+                    }
+                    line.append(word);
+                    lineWidth = candidateWidth;
                     continue;
                 }
                 if (!line.isEmpty()) {
@@ -921,6 +937,7 @@ final class PdfRecordReportWriter {
                 } else {
                     splitLongWord(font, size, word, maximumWidth, lines, line);
                 }
+                lineWidth = font.widthUnits(line.toString());
             }
             if (!line.isEmpty()) {
                 lines.add(line.toString());
@@ -930,7 +947,7 @@ final class PdfRecordReportWriter {
     }
 
     private static void splitLongWord(
-            PDFont font,
+            FontMetrics font,
             float size,
             String word,
             float maximumWidth,
@@ -938,42 +955,125 @@ final class PdfRecordReportWriter {
             StringBuilder tail
     ) throws IOException {
         StringBuilder part = new StringBuilder();
+        float width = 0;
         for (int offset = 0; offset < word.length();) {
             int codePoint = word.codePointAt(offset);
-            String candidate = part + new String(Character.toChars(codePoint));
-            if (!part.isEmpty() && textWidth(font, size, candidate) > maximumWidth) {
+            float advance = font.advance(codePoint);
+            float candidateWidth = width + advance;
+            if (!part.isEmpty() && candidateWidth / 1000f * size > maximumWidth) {
                 lines.add(part.toString());
                 part.setLength(0);
+                candidateWidth = advance;
             }
             part.appendCodePoint(codePoint);
+            width = candidateWidth;
             offset += Character.charCount(codePoint);
         }
         tail.append(part);
     }
 
-    private static float textWidth(PDFont font, float size, String value)
+    private static float textWidth(FontMetrics font, float size, String value)
             throws IOException {
-        return font.getStringWidth(value) / 1000f * size;
+        return font.widthUnits(value) / 1000f * size;
     }
 
-    private static String supportedText(PDFont font, String value) throws IOException {
-        StringBuilder safe = new StringBuilder(value.length());
+    private static String supportedText(FontMetrics font, String value) throws IOException {
+        StringBuilder safe = null;
         for (int offset = 0; offset < value.length();) {
             int codePoint = value.codePointAt(offset);
             int type = Character.getType(codePoint);
             if (Character.isISOControl(codePoint)
                     || type == Character.LINE_SEPARATOR
                     || type == Character.PARAGRAPH_SEPARATOR) {
+                if (safe == null) {
+                    safe = new StringBuilder(value.length());
+                    safe.append(value, 0, offset);
+                }
                 if (safe.isEmpty() || safe.charAt(safe.length() - 1) != ' ') {
                     safe.append(' ');
                 }
                 offset += Character.charCount(codePoint);
                 continue;
             }
+            font.advance(codePoint);
+            if (safe != null) {
+                safe.appendCodePoint(codePoint);
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return safe == null ? value : safe.toString();
+    }
+
+    private static final class FontMetrics implements AutoCloseable {
+
+        private static final int MAX_CACHED_TEXTS = 2048;
+        private static final int MAX_CACHED_TEXT_LENGTH = 1024;
+
+        private final PDDocument document;
+        private final PDFont font;
+        private final float[] commonAdvances = new float[256];
+        private final boolean[] measuredCommon = new boolean[256];
+        private final Map<Integer, Float> otherAdvances = new HashMap<>();
+        private final Map<String, byte[]> textCommands = new HashMap<>();
+        private final ByteArrayOutputStream encodedText = new ByteArrayOutputStream();
+        private PDPageContentStream textEncoder;
+
+        private FontMetrics(PDDocument document, PDFont font) {
+            this.document = document;
+            this.font = font;
+        }
+
+        private void showText(PDPageContentStream content, String value) throws IOException {
+            if (!(font instanceof PDType0Font) || value.length() > MAX_CACHED_TEXT_LENGTH) {
+                content.showText(value);
+                return;
+            }
+            byte[] commands = textCommands.get(value);
+            if (commands == null) {
+                if (textCommands.size() >= MAX_CACHED_TEXTS) {
+                    content.showText(value);
+                    return;
+                }
+                if (textEncoder == null) {
+                    PDAppearanceStream appearance = new PDAppearanceStream(document);
+                    appearance.setResources(new PDResources());
+                    textEncoder = new PDPageContentStream(document, appearance, encodedText);
+                    textEncoder.beginText();
+                    textEncoder.setFont(font, 1);
+                }
+                // PDFBox performs the original GSUB shaping and subset registration.
+                // Capture only showText's operand + Tj: BT/Tf and resources never
+                // leave the encoder. The page supplies its own font, size and matrix.
+                encodedText.reset();
+                textEncoder.showText(value);
+                commands = encodedText.toByteArray();
+                textCommands.put(value, commands);
+            }
+            appendTextCommands(content, commands);
+        }
+
+        @SuppressWarnings("deprecation")
+        private static void appendTextCommands(PDPageContentStream content, byte[] commands)
+                throws IOException {
+            // These bytes were emitted by PDFBox for this document's exact PDFont;
+            // replaying the Tj operation preserves shaping without repeating it.
+            content.appendRawCommands(commands);
+        }
+
+        private float advance(int codePoint) throws IOException {
+            if (codePoint < commonAdvances.length && measuredCommon[codePoint]) {
+                return commonAdvances[codePoint];
+            }
+            if (codePoint >= commonAdvances.length) {
+                Float cached = otherAdvances.get(codePoint);
+                if (cached != null) {
+                    return cached;
+                }
+            }
             String character = new String(Character.toChars(codePoint));
+            float width;
             try {
-                font.getStringWidth(character);
-                safe.append(character);
+                width = font.getStringWidth(character);
             } catch (IOException | IllegalArgumentException exception) {
                 throw new IOException(
                         "El PDF contiene un carácter que la fuente no puede representar: "
@@ -981,9 +1081,45 @@ final class PdfRecordReportWriter {
                         exception
                 );
             }
-            offset += Character.charCount(codePoint);
+            if (codePoint < commonAdvances.length) {
+                commonAdvances[codePoint] = width;
+                measuredCommon[codePoint] = true;
+            } else {
+                otherAdvances.put(codePoint, width);
+            }
+            return width;
         }
-        return safe.toString();
+
+        private float widthUnits(String value) throws IOException {
+            return appendWidth(0, value);
+        }
+
+        private float appendWidth(float width, String value) throws IOException {
+            // Match PDFont.getStringWidth's glyph order and float rounding exactly.
+            // The cache belongs to this document: PDFont instances must never escape it.
+            for (int offset = 0; offset < value.length();) {
+                int codePoint = value.codePointAt(offset);
+                width += advance(codePoint);
+                offset += Character.charCount(codePoint);
+            }
+            return width;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                if (textEncoder != null) {
+                    try {
+                        textEncoder.endText();
+                    } finally {
+                        textEncoder.close();
+                    }
+                }
+            } finally {
+                textCommands.clear();
+                encodedText.reset();
+            }
+        }
     }
 
     private static String dateRange(List<BirdEventReportRow> records) {

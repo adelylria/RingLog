@@ -43,6 +43,7 @@ import com.adelylria.ringlog.model.BirdStatusCatalog;
 import com.adelylria.ringlog.model.input.BirdEventInput;
 import com.adelylria.ringlog.model.view.BirdEventDetail;
 import com.adelylria.ringlog.model.view.BirdLookup;
+import com.adelylria.ringlog.model.view.CaptureMethodOption;
 import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.model.view.SpeciesOption;
 import com.adelylria.ringlog.repository.BirdEventRepository;
@@ -67,6 +68,7 @@ public class CapturePanel extends JPanel {
     private final JComboBox<SpeciesOption> speciesCombo;
     private final JComboBox<EventType> eventTypeCombo;
     private final JComboBox<PlaceSummary> placeCombo;
+    private final JComboBox<CaptureMethodOption> captureMethodCombo;
     private final JComboBox<String> sexCombo;
     private final JComboBox<BirdStatusChoice> statusCombo;
     private final JComboBox<String> conditionCombo;
@@ -98,6 +100,8 @@ public class CapturePanel extends JPanel {
     private SpeciesOption pendingSpeciesFallback;
     private PlaceSummary pendingPlaceFallback;
     private int catalogLoadGeneration;
+    private int captureMethodLoadGeneration;
+    private Long originalCaptureMethodId;
     private final EventPhotoService photoService;
     private final EventPhotoEditor photoEditor;
     private JButton cancelButton;
@@ -123,6 +127,7 @@ public class CapturePanel extends JPanel {
         if (!changes.confirmDiscard()) return false;
         ringLookupTimer.stop();
         catalogLoadGeneration++;
+        captureMethodLoadGeneration++;
         if (photoEditor != null) photoEditor.discardPending();
         changes.markClean();
         return true;
@@ -155,6 +160,7 @@ public class CapturePanel extends JPanel {
         this.speciesCombo = new JComboBox<>();
         this.eventTypeCombo = new JComboBox<>(EventType.values());
         this.placeCombo = placeSelector();
+        this.captureMethodCombo = captureMethodSelector();
         this.sexCombo = combo("Sin indicar", "Macho", "Hembra");
         this.statusCombo = birdStatusCombo();
         this.statusCombo.setName("birdStatusField");
@@ -268,6 +274,9 @@ public class CapturePanel extends JPanel {
         editingEventId = null;
         preservedRingerInitials = null;
         preservedCaptureType = null;
+        originalCaptureMethodId = null;
+        captureMethodCombo.removeAllItems();
+        captureMethodCombo.addItem(null);
         pendingSpeciesId = null;
         pendingPlaceId = null;
         pendingSpeciesFallback = null;
@@ -326,6 +335,15 @@ public class CapturePanel extends JPanel {
         // No longer editable, but still part of the historical event and its exports.
         preservedRingerInitials = detail.ringerInitials();
         preservedCaptureType = detail.captureType();
+        originalCaptureMethodId = detail.captureMethodId();
+        captureMethodCombo.removeAllItems();
+        captureMethodCombo.addItem(null);
+        if (originalCaptureMethodId != null) {
+            CaptureMethodOption original = new CaptureMethodOption(
+                    originalCaptureMethodId, UiKit.display(detail.captureMethod()), true);
+            captureMethodCombo.addItem(original);
+            captureMethodCombo.setSelectedItem(original);
+        }
         pendingSpeciesId = detail.speciesId();
         pendingPlaceId = detail.placeId();
         pendingSpeciesFallback = detail.speciesId() < 1
@@ -427,6 +445,7 @@ public class CapturePanel extends JPanel {
         addField(grid, 4, "Especie *", speciesCombo);
         addField(grid, 5, "Lugar", placeCombo);
         addField(grid, 6, "Ubicación libre", locationTextField);
+        addField(grid, 7, "Método de captura", captureMethodCombo);
         panel.add(grid, BorderLayout.CENTER);
         JPanel lookup = new JPanel(new BorderLayout());
         lookup.setOpaque(false);
@@ -601,6 +620,78 @@ public class CapturePanel extends JPanel {
         return combo;
     }
 
+    private static JComboBox<CaptureMethodOption> captureMethodSelector() {
+        JComboBox<CaptureMethodOption> combo = new JComboBox<>();
+        combo.setName("captureMethodField");
+        combo.getAccessibleContext().setAccessibleName("Método de captura");
+        combo.setMinimumSize(new Dimension(0, combo.getPreferredSize().height));
+        combo.addItem(null);
+        combo.addActionListener(event -> {
+            CaptureMethodOption selected = (CaptureMethodOption) combo.getSelectedItem();
+            combo.setToolTipText(selected == null ? null : selected.name());
+        });
+        combo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(
+                    JList<?> list, Object value, int index, boolean selected, boolean focused
+            ) {
+                super.getListCellRendererComponent(list, value, index, selected, focused);
+                CaptureMethodOption method = (CaptureMethodOption) value;
+                setText(method == null ? "Sin indicar"
+                        : method.name() + (method.active() ? "" : " (archivado)"));
+                setToolTipText(getText());
+                return this;
+            }
+        });
+        return combo;
+    }
+
+    public void refreshCaptureMethods() {
+        int generation = ++captureMethodLoadGeneration;
+        new SwingWorker<List<CaptureMethodOption>, Void>() {
+            @Override protected List<CaptureMethodOption> doInBackground() {
+                return catalogRepository.findCaptureMethods();
+            }
+
+            @Override protected void done() {
+                if (generation != captureMethodLoadGeneration || saving) return;
+                try {
+                    List<CaptureMethodOption> methods = get();
+                    boolean clean = !changes.isChanged(captureMethodCombo);
+                    CaptureMethodOption selected = (CaptureMethodOption) captureMethodCombo.getSelectedItem();
+                    Long selectedId = selected == null ? null : selected.id();
+                    captureMethodCombo.removeAllItems();
+                    captureMethodCombo.addItem(null);
+                    boolean found = false;
+                    for (CaptureMethodOption method : methods) {
+                        boolean keepHistorical = originalCaptureMethodId != null
+                                && originalCaptureMethodId == method.id();
+                        if (method.active() || keepHistorical) {
+                            captureMethodCombo.addItem(method);
+                            if (selectedId != null && selectedId == method.id()) {
+                                captureMethodCombo.setSelectedItem(method);
+                                found = true;
+                            }
+                        }
+                    }
+                    if (!found && selectedId != null && selectedId.equals(originalCaptureMethodId)) {
+                        captureMethodCombo.addItem(selected);
+                        captureMethodCombo.setSelectedItem(selected);
+                        found = true;
+                    }
+                    if (clean && (selectedId == null || found)) changes.acceptValue(captureMethodCombo);
+                    CaptureMethodOption current = (CaptureMethodOption) captureMethodCombo.getSelectedItem();
+                    captureMethodCombo.setToolTipText(current == null ? null : current.name());
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    captureMethodCombo.setToolTipText("Se ha interrumpido la carga de métodos.");
+                } catch (ExecutionException exception) {
+                    captureMethodCombo.setToolTipText("No se han podido cargar los métodos. Abre Gestionar para reintentarlo.");
+                }
+            }
+        }.execute();
+    }
+
     private static String placeLabel(PlaceSummary place) {
         if (place == null) {
             return "";
@@ -623,6 +714,7 @@ public class CapturePanel extends JPanel {
     }
 
     public void refreshCatalogs() {
+        refreshCaptureMethods();
         SpeciesOption selectedSpecies = (SpeciesOption) speciesCombo.getSelectedItem();
         PlaceSummary selectedPlace = (PlaceSummary) placeCombo.getSelectedItem();
         Long selectedSpeciesId = pendingSpeciesId != null
@@ -901,8 +993,14 @@ public class CapturePanel extends JPanel {
                 thermalField.getText().trim(),
                 windField.getText().trim(),
                 preservedCaptureType,
-                deadCheck.isSelected()
+                deadCheck.isSelected(),
+                selectedCaptureMethodId()
         );
+    }
+
+    private Long selectedCaptureMethodId() {
+        CaptureMethodOption method = (CaptureMethodOption) captureMethodCombo.getSelectedItem();
+        return method == null ? null : method.id();
     }
 
     private String normalizedRing() {

@@ -3,6 +3,8 @@ package com.adelylria.ringlog.ui;
 import java.awt.Component;
 import java.awt.Container;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -10,6 +12,7 @@ import javax.swing.AbstractButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPopupMenu;
+import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
 
 import com.adelylria.ringlog.ui.components.CalendarDatePicker;
@@ -90,6 +93,53 @@ public final class CalendarDatePickerTest {
         });
     }
 
+    public static void calendarReusesCellsWithoutStaleDateListeners() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            CalendarDatePicker picker = new CalendarDatePicker(LocalDate.of(2024, 2, 29));
+            JPopupMenu popup = picker.getComponentPopupMenu();
+            List<JToggleButton> originalCells = dayButtons(popup);
+            require(originalCells.size() == 42,
+                    "The calendar should retain a fixed six-week grid rather than rebuild its controls");
+            AbstractButton leapDay = button(popup, "calendarDay-2024-02-29");
+            picker.setAvailableDates(Set.of(LocalDate.of(2024, 2, 29)));
+            require("Tiene registros".equals(leapDay.getAccessibleContext().getAccessibleDescription()),
+                    "Refreshing entry markers should update an existing calendar cell");
+
+            button(popup, "calendarNextMonth").doClick();
+            require(find(popup, "calendarDay-2024-02-29") == null,
+                    "A reused cell must no longer expose its previous month's date");
+            AbstractButton marchDay = button(popup, "calendarDay-2024-03-28");
+            require(marchDay == leapDay,
+                    "Month navigation should reuse the cell at the same grid position");
+            require("Sin registros".equals(marchDay.getAccessibleContext().getAccessibleDescription()),
+                    "A reused cell must not keep the previous date's entry marker");
+            marchDay.doClick();
+            require(LocalDate.of(2024, 3, 28).equals(picker.getSelectedDate()),
+                    "The reused listener must select the newly displayed date, not the old date");
+            marchDay.doClick();
+            require(marchDay.isSelected(),
+                    "Clicking an already selected day must keep the current filter visibly selected");
+            picker.setAvailableDates(Set.of(LocalDate.of(2024, 3, 28)));
+            picker.setAvailableDates(Set.of(LocalDate.of(2024, 3, 28)));
+            picker.setSelectedDate(LocalDate.of(2024, 3, 28));
+            picker.setSelectedDate(null);
+            require(!marchDay.isSelected(), "Clearing the filter must clear its reused selected cell");
+            require(originalCells.equals(dayButtons(popup)),
+                    "Selection and marker refreshes must retain the existing grid components");
+            long visibleDays = originalCells.stream().filter(Component::isVisible).count();
+            require(visibleDays == 31, "Unused cells must remain blank when navigating to a 31-day month");
+        });
+    }
+
+    private static List<JToggleButton> dayButtons(Container root) {
+        List<JToggleButton> buttons = new ArrayList<>();
+        for (Component child : root.getComponents()) {
+            if (child instanceof JToggleButton button) buttons.add(button);
+            if (child instanceof Container nested) buttons.addAll(dayButtons(nested));
+        }
+        return buttons;
+    }
+
     private static AbstractButton button(Container root, String name) {
         Component found = find(root, name);
         require(found instanceof AbstractButton, "Missing calendar control: " + name);
@@ -137,6 +187,7 @@ public final class CalendarDatePickerTest {
     public static void main(String[] args) throws Exception {
         calendarNavigatesMarksEntriesAndSelectsAnyDay();
         calendarPopupFollowsThemeChanges();
+        calendarReusesCellsWithoutStaleDateListeners();
         System.out.println("CalendarDatePickerTest: PASS");
     }
 }

@@ -132,6 +132,14 @@ public final class ImportFingerprintService {
         addCollection(digest, "warnings", model.warnings(), value -> row(
                 value.severity(), value.source(), value.reference(), value.message()
         ));
+        if (!model.captureMethods().isEmpty()) {
+            addCollection(digest, "capture_methods", model.captureMethods(), value -> row(
+                    value.stableKey(), value.name(), value.active()
+            ));
+            addCollection(digest, "event_capture_methods", model.events(), value -> row(
+                    value.stableKey(), value.captureMethodStableKey()
+            ));
+        }
         return HexFormat.of().formatHex(digest.digest());
     }
 

@@ -5,11 +5,13 @@ import com.adelylria.ringlog.database.WritableDatabaseAccess;
 import com.adelylria.ringlog.application.DataMutationCoordinator;
 import com.adelylria.ringlog.storage.AppPaths;
 import com.adelylria.ringlog.database.entity.BirdEntity;
+import com.adelylria.ringlog.database.entity.CaptureMethodEntity;
 import com.adelylria.ringlog.database.entity.PlaceEntity;
 import com.adelylria.ringlog.database.entity.SpeciesEntity;
 import com.adelylria.ringlog.model.input.PlaceInput;
 import com.adelylria.ringlog.model.input.SpeciesInput;
 import com.adelylria.ringlog.model.view.BirdOption;
+import com.adelylria.ringlog.model.view.CaptureMethodOption;
 import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.model.view.SpeciesOption;
 import com.adelylria.ringlog.model.view.SpeciesSummary;
@@ -209,6 +211,75 @@ public class CatalogRepository {
             });
         } catch (SQLException exception) {
             throw new RepositoryException("Error cargando las especies", exception);
+        }
+    }
+
+    public List<CaptureMethodOption> findCaptureMethodOptions() {
+        return findCaptureMethods().stream().filter(CaptureMethodOption::active).toList();
+    }
+
+    public List<CaptureMethodOption> findCaptureMethods() {
+        try {
+            return databaseAccess.withOrm(source -> {
+                Dao<CaptureMethodEntity, Long> dao = DaoManager.createDao(source, CaptureMethodEntity.class);
+                return dao.queryForAll().stream()
+                        .map(method -> new CaptureMethodOption(method.id(), method.getName(), method.isActive()))
+                        .sorted(Comparator.comparing(CaptureMethodOption::name, String.CASE_INSENSITIVE_ORDER))
+                        .toList();
+            });
+        } catch (SQLException exception) {
+            throw new RepositoryException("Error cargando los métodos de captura", exception);
+        }
+    }
+
+    public long saveCaptureMethod(Long id, String name) {
+        String normalized = required(name, "Indica el nombre del método de captura.")
+                .replaceAll("\\s+", " ");
+        if (id != null && id < 1) {
+            throw new IllegalArgumentException("Falta el método de captura que quieres editar.");
+        }
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            return databaseAccess.withOrm(source -> TransactionManager.callInTransaction(source, () -> {
+                Dao<CaptureMethodEntity, Long> dao = DaoManager.createDao(source, CaptureMethodEntity.class);
+                for (CaptureMethodEntity other : dao.queryForAll()) {
+                    if ((id == null || other.id() != id) && normalized.equalsIgnoreCase(other.getName())) {
+                        throw new IllegalArgumentException("Ya existe un método de captura con ese nombre.");
+                    }
+                }
+                CaptureMethodEntity method = id == null ? new CaptureMethodEntity(normalized) : dao.queryForId(id);
+                if (method == null) {
+                    throw new IllegalArgumentException("El método de captura ya no está disponible.");
+                }
+                method.setName(normalized);
+                if (id == null) dao.create(method); else dao.update(method);
+                return method.id();
+            }));
+        } catch (SQLException exception) {
+            for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+                if (cause instanceof IllegalArgumentException validation) throw validation;
+            }
+            if (isConstraintViolation(exception)) {
+                throw new IllegalArgumentException("Ya existe un método de captura con ese nombre.");
+            }
+            throw new RepositoryException("Error guardando el método de captura", exception);
+        }
+    }
+
+    public void setCaptureMethodActive(long id, boolean active) {
+        if (id < 1) throw new IllegalArgumentException("Falta el método de captura.");
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            databaseAccess.withOrm(source -> {
+                Dao<CaptureMethodEntity, Long> dao = DaoManager.createDao(source, CaptureMethodEntity.class);
+                CaptureMethodEntity method = dao.queryForId(id);
+                if (method == null) {
+                    throw new IllegalArgumentException("El método de captura ya no está disponible.");
+                }
+                method.setActive(active);
+                dao.update(method);
+                return null;
+            });
+        } catch (SQLException exception) {
+            throw new RepositoryException("Error actualizando el método de captura", exception);
         }
     }
 

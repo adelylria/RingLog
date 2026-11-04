@@ -12,7 +12,8 @@ public record RingLogV3BackupModel(
         List<PlaceRow> places,
         List<EventRow> events,
         List<PhotoRow> photos,
-        List<WarningRow> warnings
+        List<WarningRow> warnings,
+        List<CaptureMethodRow> captureMethods
 ) {
 
     public RingLogV3BackupModel {
@@ -23,6 +24,10 @@ public record RingLogV3BackupModel(
         events = List.copyOf(Objects.requireNonNull(events, "events"));
         photos = List.copyOf(Objects.requireNonNull(photos, "photos"));
         warnings = List.copyOf(Objects.requireNonNull(warnings, "warnings"));
+        captureMethods = List.copyOf(Objects.requireNonNull(captureMethods, "captureMethods"));
+    }
+
+    public record CaptureMethodRow(String stableKey, String name, boolean active) {
     }
 
     public record SpeciesRow(
@@ -77,7 +82,8 @@ public record RingLogV3BackupModel(
             String sourceReference,
             List<String> sourceAliases,
             String createdAt,
-            String updatedAt
+            String updatedAt,
+            String captureMethodStableKey
     ) {
         public EventRow {
             sourceAliases = List.copyOf(Objects.requireNonNull(sourceAliases, "sourceAliases"));

@@ -775,7 +775,8 @@ public final class BirdEventUiTest {
         int actual;
         do {
             actual = onEdt(() -> descendants(panel, BirdEventCard.class).size());
-            if (actual == expected) {
+            if (actual == expected && !onEdt(() -> Boolean.TRUE.equals(
+                    panel.getClientProperty("RingLog.filterPending")))) {
                 return;
             }
             Thread.sleep(20);

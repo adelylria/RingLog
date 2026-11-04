@@ -21,6 +21,7 @@ public final class NavigationIcon implements Icon {
         CAPTURES,
         SPECIES,
         PLACES,
+        METHODS,
         REPORTS,
         REVIEWS,
         EDIT,
@@ -69,6 +70,13 @@ public final class NavigationIcon implements Icon {
                 case CAPTURES -> paintCaptures(g2);
                 case SPECIES -> paintSpecies(g2);
                 case PLACES -> paintPlace(g2);
+                case METHODS -> {
+                    g2.draw(new Rectangle2D.Double(3, 3, 12, 12));
+                    for (int position : new int[]{7, 11}) {
+                        g2.draw(new Line2D.Double(position, 3, position, 15));
+                        g2.draw(new Line2D.Double(3, position, 15, position));
+                    }
+                }
                 case REPORTS -> paintReports(g2);
                 case REVIEWS -> paintReviews(g2);
                 case EDIT -> paintEdit(g2);

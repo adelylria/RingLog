@@ -17,6 +17,8 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
@@ -77,10 +79,17 @@ public class Sidebar extends JPanel {
 
         addNavigation(menu, "Especies", MainFrame.SPECIES, NavigationIcon.Kind.SPECIES);
         addNavigation(menu, "Lugares", MainFrame.PLACES, NavigationIcon.Kind.PLACES);
+        addNavigation(menu, "Métodos de captura", MainFrame.CAPTURE_METHODS, NavigationIcon.Kind.METHODS);
         addNavigation(menu, "Informes", MainFrame.REPORTS, NavigationIcon.Kind.REPORTS);
         addNavigation(menu, "Revisiones", MainFrame.CONFLICTS, NavigationIcon.Kind.REVIEWS);
 
-        add(menu, BorderLayout.NORTH);
+        JScrollPane navigationScroll = new JScrollPane(menu);
+        navigationScroll.setBorder(null);
+        navigationScroll.setOpaque(false);
+        navigationScroll.getViewport().setOpaque(false);
+        navigationScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        navigationScroll.getVerticalScrollBar().setUnitIncrement(20);
+        add(navigationScroll, BorderLayout.CENTER);
 
         JPanel footer = new JPanel();
         footer.setOpaque(false);

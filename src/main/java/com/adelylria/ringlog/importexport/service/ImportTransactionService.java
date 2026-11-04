@@ -251,7 +251,8 @@ public final class ImportTransactionService {
         Map<String, Long> species = restoreNativeSpecies(anchor, model);
         Map<String, Long> birds = restoreNativeBirds(anchor, model, species);
         Map<String, Long> places = restoreNativePlaces(anchor, model);
-        Map<String, Long> events = restoreNativeEvents(anchor, model, birds, places);
+        Map<String, Long> captureMethods = restoreNativeCaptureMethods(anchor, model);
+        Map<String, Long> events = restoreNativeEvents(anchor, model, birds, places, captureMethods);
         Map<String, Long> batches = restoreNativeBatches(anchor, model);
         restoreNativeMetadata(anchor, model, batches);
         restoreNativeAliases(anchor, model, events);
@@ -337,11 +338,54 @@ public final class ImportTransactionService {
         return result;
     }
 
+    private static Map<String, Long> restoreNativeCaptureMethods(
+            Dao<ImportBatchEntity, Long> anchor,
+            NativeExportModel model
+    ) throws SQLException {
+        prepareCaptureMethodSeeds(anchor, model.rows("capture_methods").stream()
+                .map(row -> row.value("stable_key")).collect(java.util.stream.Collectors.toSet()));
+        Map<String, Long> result = new HashMap<>();
+        for (NativeRow row : model.rows("capture_methods")) {
+            Map<String, String> values = linkedValues();
+            copy(values, row, "stable_key", "name", "active");
+            insertOrVerify(anchor, "capture_method", "stable_key = ?",
+                    new String[]{row.value("stable_key")}, values);
+            result.put(row.value("stable_key"),
+                    queryId(anchor, "capture_method", row.value("stable_key")));
+        }
+        return result;
+    }
+
+    private static void prepareCaptureMethodSeeds(
+            Dao<ImportBatchEntity, Long> anchor,
+            Set<String> incomingKeys
+    ) throws SQLException {
+        // Fresh databases contain these placeholders. An imported catalogue may have
+        // renamed or archived them; replace only pristine seeds without event references.
+        Map<String, String> seeds = Map.of(
+                "39d6ec44-2b19-4b49-a69c-d2af0aa31f8d", "FILATS",
+                "9145f480-ef6b-4392-a33b-48d4e9bf5b11", "RED JAPONESA"
+        );
+        for (Map.Entry<String, String> seed : seeds.entrySet()) {
+            if (incomingKeys.contains(seed.getKey())) {
+                anchor.executeRaw("""
+                        DELETE FROM capture_method
+                        WHERE stable_key = ? AND name = ? AND active = 1
+                          AND NOT EXISTS (
+                              SELECT 1 FROM bird_event e
+                              WHERE e.capture_method_id = capture_method.id
+                          )
+                        """, seed.getKey(), seed.getValue());
+            }
+        }
+    }
+
     private static Map<String, Long> restoreNativeEvents(
             Dao<ImportBatchEntity, Long> anchor,
             NativeExportModel model,
             Map<String, Long> birds,
-            Map<String, Long> places
+            Map<String, Long> places,
+            Map<String, Long> captureMethods
     ) throws SQLException {
         Map<String, Long> result = new HashMap<>();
         for (NativeRow row : model.rows("events")) {
@@ -354,6 +398,9 @@ public final class ImportTransactionService {
             copy(values, row, "event_type", "event_date", "event_time");
             values.put("place_id", row.value("place_stable_key") == null ? null
                     : Long.toString(requiredId(places, row.value("place_stable_key"), "lugar")));
+            values.put("capture_method_id", row.value("capture_method_stable_key") == null ? null
+                    : Long.toString(requiredId(captureMethods,
+                            row.value("capture_method_stable_key"), "método de captura")));
             copy(values, row, "location_text", "sex_code", "age_euring_code", "fat_score",
                     "muscle_score", "ringer_initials", "status", "reproductive_status",
                     "moult_intensity", "moult_extension", "bird_condition", "return_status",
@@ -683,8 +730,9 @@ public final class ImportTransactionService {
         Map<String, Long> speciesIds = restoreBackupSpecies(source, model);
         Map<String, Long> birdIds = restoreBackupBirds(source, model, speciesIds);
         Map<String, Long> placeIds = restoreBackupPlaces(source, model);
+        Map<String, Long> captureMethodIds = restoreBackupCaptureMethods(batchDao, model);
         Map<String, Long> eventIds = restoreBackupEvents(
-                source, model, birdIds, placeIds
+                source, model, birdIds, placeIds, captureMethodIds
         );
         restoreBackupAliases(source, model, eventIds);
         restoreBackupPhotos(source, model, eventIds, storage, resolver);
@@ -777,21 +825,50 @@ public final class ImportTransactionService {
         return result;
     }
 
+    private static Map<String, Long> restoreBackupCaptureMethods(
+            Dao<ImportBatchEntity, Long> anchor,
+            RingLogV3BackupModel model
+    ) throws SQLException {
+        prepareCaptureMethodSeeds(anchor, model.captureMethods().stream()
+                .map(RingLogV3BackupModel.CaptureMethodRow::stableKey)
+                .collect(java.util.stream.Collectors.toSet()));
+        Map<String, Long> result = new HashMap<>();
+        for (RingLogV3BackupModel.CaptureMethodRow row : model.captureMethods()) {
+            Map<String, String> values = linkedValues();
+            values.put("stable_key", row.stableKey());
+            values.put("name", row.name());
+            values.put("active", row.active() ? "1" : "0");
+            insertOrVerify(anchor, "capture_method", "stable_key = ?",
+                    new String[]{row.stableKey()}, values);
+            result.put(row.stableKey(), queryId(anchor, "capture_method", row.stableKey()));
+        }
+        return result;
+    }
+
     private static Map<String, Long> restoreBackupEvents(
             ConnectionSource source,
             RingLogV3BackupModel model,
             Map<String, Long> birdIds,
-            Map<String, Long> placeIds
+            Map<String, Long> placeIds,
+            Map<String, Long> captureMethodIds
     ) throws SQLException {
         Dao<BirdEventEntity, Long> dao = dao(source, BirdEventEntity.class);
         Map<String, Long> result = new HashMap<>();
         for (RingLogV3BackupModel.EventRow row : model.events()) {
             BirdEventEntity entity = first(dao, "stable_key", row.stableKey());
+            Long captureMethodId = row.captureMethodStableKey() == null ? null
+                    : requiredId(captureMethodIds, row.captureMethodStableKey(), "método de captura");
+            if (entity != null && (model.metadata().containsKey("capture_methods_count")
+                    || !model.captureMethods().isEmpty())
+                    && !Objects.equals(entity.getCaptureMethodId(), captureMethodId)) {
+                throw conflict("selección de método de captura", row.stableKey());
+            }
             if (entity == null) {
                 long birdId = requiredId(birdIds, row.ringNumber(), "ave");
                 Long placeId = row.placeStableKey() == null
                         ? null : requiredId(placeIds, row.placeStableKey(), "lugar");
                 entity = backupEventEntity(row, birdId, placeId);
+                entity.setCaptureMethodId(captureMethodId);
                 dao.create(entity);
                 restoreTimestamps(dao, BirdEventEntity.TABLE, entity.id(),
                         row.createdAt(), row.updatedAt());

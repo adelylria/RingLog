@@ -1,6 +1,6 @@
 PRAGMA foreign_keys = ON;
 
--- RingLog schema v3. Stable identities are supplied by Java, never SQLite.
+-- RingLog schema v6. Stable identities are supplied by Java, never SQLite.
 CREATE TABLE species (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
@@ -40,6 +40,17 @@ CREATE TABLE place (
     UNIQUE (name, locality)
 );
 
+CREATE TABLE capture_method (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+);
+
+INSERT INTO capture_method(stable_key, name) VALUES
+    ('39d6ec44-2b19-4b49-a69c-d2af0aa31f8d', 'FILATS'),
+    ('9145f480-ef6b-4392-a33b-48d4e9bf5b11', 'RED JAPONESA');
+
 CREATE TABLE bird_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
@@ -71,6 +82,7 @@ CREATE TABLE bird_event (
     thermal_sensation TEXT,
     wind TEXT,
     capture_type TEXT,
+    capture_method_id INTEGER,
     is_dead INTEGER NOT NULL DEFAULT 0 CHECK (is_dead IN (0, 1)),
     source_name TEXT,
     source_reference TEXT UNIQUE,
@@ -79,7 +91,8 @@ CREATE TABLE bird_event (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT,
     FOREIGN KEY (bird_id) REFERENCES bird(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    FOREIGN KEY (place_id) REFERENCES place(id) ON UPDATE CASCADE ON DELETE SET NULL
+    FOREIGN KEY (place_id) REFERENCES place(id) ON UPDATE CASCADE ON DELETE SET NULL,
+    FOREIGN KEY (capture_method_id) REFERENCES capture_method(id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 CREATE TABLE event_photo (
@@ -222,6 +235,7 @@ CREATE TABLE migration_warning (
 CREATE UNIQUE INDEX idx_species_stable_key ON species(stable_key);
 CREATE UNIQUE INDEX idx_bird_stable_key ON bird(stable_key);
 CREATE UNIQUE INDEX idx_place_stable_key ON place(stable_key);
+CREATE UNIQUE INDEX idx_capture_method_stable_key ON capture_method(stable_key);
 CREATE UNIQUE INDEX idx_event_stable_key ON bird_event(stable_key);
 CREATE UNIQUE INDEX idx_photo_stable_key ON event_photo(stable_key);
 CREATE UNIQUE INDEX idx_event_migration_key ON bird_event(migration_key) WHERE migration_key IS NOT NULL;
@@ -244,6 +258,7 @@ CREATE INDEX idx_event_bird ON bird_event(bird_id);
 CREATE INDEX idx_event_date ON bird_event(event_date);
 CREATE INDEX idx_event_type ON bird_event(event_type);
 CREATE INDEX idx_event_place ON bird_event(place_id);
+CREATE INDEX idx_event_capture_method ON bird_event(capture_method_id);
 CREATE INDEX idx_event_bird_date ON bird_event(bird_id, event_date DESC, event_time DESC);
 CREATE INDEX idx_place_favorite ON place(is_favorite DESC, name);
 CREATE INDEX idx_photo_event ON event_photo(event_id);
@@ -285,4 +300,4 @@ BEGIN
     UPDATE bird_event SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;

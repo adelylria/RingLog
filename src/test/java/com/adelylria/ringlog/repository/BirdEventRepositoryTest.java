@@ -334,6 +334,54 @@ public final class BirdEventRepositoryTest {
         }
     }
 
+    public static void fullArchiveKeepsTheSameOrderJourneysAndPhotosAsIndexedQueries()
+            throws Exception {
+        Path copy = copySeededDatabase();
+        try {
+            try (Connection connection = Database.getConnection(copy.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("""
+                        UPDATE bird_event SET event_date = '2026-02-01', event_time = '14:00:00'
+                        WHERE id = 1
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO bird_event(id, stable_key, bird_id, event_type, event_date, event_time)
+                        VALUES (9, 'event-journey-regression', 2, 'CONTROL', '2026-01-03', '10:00:00')
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO event_photo(id, stable_key, event_id, file_name, file_path) VALUES
+                            (20, 'photo-journey-second', 1, 'second.png', 'events/regression/second.png'),
+                            (10, 'photo-journey-first', 1, 'first.png', 'events/regression/first.png')
+                        """);
+            }
+            byte[] before = Files.readAllBytes(copy);
+            BirdEventRepository repository = new BirdEventRepository(copy.toString());
+            List<BirdEventTimelineItem> archive = repository.findTimeline();
+            require(archive.size() == 9 && archive.get(0).id() == 8 && archive.get(1).id() == 1,
+                    "The archive must retain newest-first order with event IDs breaking equal timestamps");
+            require(archive.equals(repository.findRecentTimeline(20)),
+                    "The grouped archive and the indexed recent query must return identical projections");
+            require(archive.subList(0, 5).equals(repository.findRecentTimeline(5)),
+                    "The limited home view must retain the archive's exact first five records");
+            for (long birdId : archive.stream().map(BirdEventTimelineItem::birdId).distinct().toList()) {
+                require(archive.stream().filter(item -> item.birdId() == birdId).toList()
+                                .equals(repository.findEventsByBird(birdId)),
+                        "Every archive projection must match its independently loaded bird history");
+            }
+            require(archive.stream().filter(item -> item.birdId() == 2).allMatch(item ->
+                            item.historyEventTypes().equals(List.of(
+                                    EventType.RINGING, EventType.CONTROL, EventType.RECOVERY))),
+                    "Repeated controls must not duplicate phases or change the journey's enum order");
+            require(archive.stream().filter(item -> item.id() == 1).findFirst().orElseThrow()
+                            .photoPath().endsWith("first.png"),
+                    "The archive must continue choosing the photograph with the lowest ID");
+            require(Arrays.equals(before, Files.readAllBytes(copy)),
+                    "Reading any timeline variant must leave the database bytes unchanged");
+        } finally {
+            Files.deleteIfExists(copy);
+        }
+    }
+
     public static void reportRowsUseOneReadOnlyCatalogSnapshot() throws Exception {
         Path copy = copySeededDatabase();
         try {
@@ -1048,6 +1096,7 @@ public final class BirdEventRepositoryTest {
             freshlyInitializedDatabaseAcceptsOrmRepositories();
             timelineReadsAllImportedEventTypes();
             recentTimelineLimitsWorkBeforeBuildingDiaryCards();
+            fullArchiveKeepsTheSameOrderJourneysAndPhotosAsIndexedQueries();
             detailUsesNormalizedBirdPlaceAndAgeFields();
             reportRowsUseOneReadOnlyCatalogSnapshot();
             birdLookupExposesItsEventHistory();

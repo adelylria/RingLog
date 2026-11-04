@@ -134,11 +134,14 @@ public final class LegacyImportService {
                 counters
         );
         Map<String, Long> placeIds = importPlaces(placeDao, data.places(), counters);
+        Map<String, Long> captureMethodIds = importCaptureMethods(speciesDao, data);
         Map<String, Long> eventIds = importEvents(
                 eventDao,
                 data.events(),
                 birdIds,
                 placeIds,
+                captureMethodIds,
+                !data.captureMethods().isEmpty(),
                 data.formatVersion(),
                 counters
         );
@@ -287,11 +290,67 @@ public final class LegacyImportService {
         return ids;
     }
 
+    private Map<String, Long> importCaptureMethods(Dao<?, ?> anchor, LegacyImportData data)
+            throws SQLException {
+        Map<String, String> seeds = Map.of(
+                "39d6ec44-2b19-4b49-a69c-d2af0aa31f8d", "FILATS",
+                "9145f480-ef6b-4392-a33b-48d4e9bf5b11", "RED JAPONESA"
+        );
+        Set<String> incoming = data.captureMethods().stream()
+                .map(com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel
+                        .CaptureMethodRow::stableKey)
+                .collect(java.util.stream.Collectors.toSet());
+        for (Map.Entry<String, String> seed : seeds.entrySet()) {
+            if (incoming.contains(seed.getKey())) {
+                anchor.executeRaw("""
+                        DELETE FROM capture_method WHERE stable_key = ? AND name = ? AND active = 1
+                          AND NOT EXISTS (SELECT 1 FROM bird_event e
+                                          WHERE e.capture_method_id = capture_method.id)
+                        """, seed.getKey(), seed.getValue());
+            }
+        }
+        Map<String, Long> methods = new HashMap<>();
+        for (var row : data.captureMethods()) {
+            List<String[]> existing;
+            try (GenericRawResults<String[]> values = anchor.queryRaw(
+                    "SELECT id, name, active FROM capture_method WHERE stable_key = ?",
+                    row.stableKey())) {
+                existing = values.getResults();
+            } catch (Exception exception) {
+                throw new SQLException("No se pudo leer el método de captura.", exception);
+            }
+            String active = row.active() ? "1" : "0";
+            if (!existing.isEmpty()) {
+                if (existing.size() != 1 || !row.name().equals(existing.get(0)[1])
+                        || !active.equals(existing.get(0)[2])) {
+                    throw conflict("El método de captura ya existe con otro contenido.");
+                }
+            } else {
+                anchor.executeRaw("INSERT INTO capture_method(stable_key, name, active) VALUES (?, ?, ?)",
+                        row.stableKey(), row.name(), active);
+            }
+            try (GenericRawResults<String[]> values = anchor.queryRaw(
+                    "SELECT id FROM capture_method WHERE stable_key = ?", row.stableKey())) {
+                methods.put(normalize(row.stableKey()), Long.valueOf(values.getFirstResult()[0]));
+            } catch (Exception exception) {
+                throw new SQLException("No se pudo resolver el método de captura.", exception);
+            }
+        }
+        Map<String, Long> eventMethods = new HashMap<>();
+        for (Map.Entry<String, String> entry : data.eventCaptureMethods().entrySet()) {
+            eventMethods.put(normalize(entry.getKey()),
+                    requiredId(methods, entry.getValue(), "método de captura"));
+        }
+        return eventMethods;
+    }
+
     private Map<String, Long> importEvents(
             Dao<BirdEventEntity, Long> dao,
             List<EventRow> rows,
             Map<String, Long> birdIds,
             Map<String, Long> placeIds,
+            Map<String, Long> captureMethodIds,
+            boolean hasCaptureMethodData,
             int formatVersion,
             Counters counters
     ) throws SQLException {
@@ -373,6 +432,11 @@ public final class LegacyImportService {
                 }
             }
             if (event != null) {
+                Long expectedMethod = captureMethodIds.get(normalize(row.key()));
+                if (hasCaptureMethodData
+                        && !Objects.equals(expectedMethod, event.getCaptureMethodId())) {
+                    throw conflict("El registro ya existe con otro método de captura.");
+                }
                 if (reconcileProvenance) {
                     reconcileSourceReference(dao, event, row);
                     existingBySource.put(row.sourceReference(), event);
@@ -383,6 +447,7 @@ public final class LegacyImportService {
                 counters.eventsSkipped++;
             } else {
                 event = eventEntity(row, birdIds, placeIds);
+                event.setCaptureMethodId(captureMethodIds.get(normalize(row.key())));
                 dao.create(event);
                 restoreTimestamps(
                         dao,

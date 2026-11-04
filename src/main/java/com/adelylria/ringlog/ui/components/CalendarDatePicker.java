@@ -23,7 +23,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
-import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -51,14 +50,23 @@ public final class CalendarDatePicker extends JPanel {
     private static final DateTimeFormatter ACCESSIBLE_FORMATTER = DateTimeFormatter
             .ofPattern("EEEE, d 'de' MMMM 'de' uuuu", SPANISH);
     private static final String[] WEEKDAYS = {"L", "M", "X", "J", "V", "S", "D"};
+    private static final Icon ENTRY_MARKER = new DayMarkerIcon(true);
+    private static final Icon EMPTY_MARKER = new DayMarkerIcon(false);
 
     private final JButton triggerButton;
     private final JPopupMenu popup;
     private final JLabel monthLabel;
     private final JPanel dayGrid;
+    private final JToggleButton[] dayButtons = new JToggleButton[42];
+    private final LocalDate[] buttonDates = new LocalDate[42];
     private final Set<LocalDate> availableDates = new HashSet<>();
     private LocalDate selectedDate;
     private YearMonth displayedMonth;
+    private YearMonth renderedMonth;
+    private LocalDate renderedSelection;
+    private LocalDate renderedToday;
+    private int availableDatesRevision;
+    private int renderedDatesRevision = -1;
 
     public CalendarDatePicker(LocalDate initialDate) {
         super(new BorderLayout());
@@ -92,8 +100,12 @@ public final class CalendarDatePicker extends JPanel {
 
         monthLabel = UiKit.valueLabel("");
         monthLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        dayGrid = new JPanel(new GridLayout(0, 7, 4, 4));
+        dayGrid = new JPanel(new GridLayout(6, 7, 4, 4));
         dayGrid.setOpaque(false);
+        for (int cell = 0; cell < dayButtons.length; cell++) {
+            dayButtons[cell] = createDayButton(cell);
+            dayGrid.add(dayButtons[cell]);
+        }
 
         popup.add(createCalendarContent());
         setComponentPopupMenu(popup);
@@ -117,16 +129,20 @@ public final class CalendarDatePicker extends JPanel {
         if (date != null) {
             displayedMonth = YearMonth.from(date);
         }
-        updateTrigger();
+        if (!Objects.equals(previous, selectedDate)) updateTrigger();
         renderMonth();
         firePropertyChange(SELECTED_DATE_PROPERTY, previous, selectedDate);
     }
 
     public void setAvailableDates(Collection<LocalDate> dates) {
-        availableDates.clear();
+        Set<LocalDate> updated = new HashSet<>();
         if (dates != null) {
-            dates.stream().filter(Objects::nonNull).forEach(availableDates::add);
+            dates.stream().filter(Objects::nonNull).forEach(updated::add);
         }
+        if (availableDates.equals(updated)) return;
+        availableDates.clear();
+        availableDates.addAll(updated);
+        availableDatesRevision++;
         renderMonth();
     }
 
@@ -195,56 +211,76 @@ public final class CalendarDatePicker extends JPanel {
         if (dayGrid == null || monthLabel == null) {
             return;
         }
-        monthLabel.setText(capitalize(displayedMonth.atDay(1).format(MONTH_FORMATTER)));
-        dayGrid.removeAll();
-
+        LocalDate today = LocalDate.now();
+        boolean monthChanged = !displayedMonth.equals(renderedMonth);
+        boolean markersChanged = availableDatesRevision != renderedDatesRevision;
+        if (!monthChanged && !markersChanged
+                && Objects.equals(selectedDate, renderedSelection)
+                && today.equals(renderedToday)) return;
+        if (monthChanged) {
+            monthLabel.setText(capitalize(displayedMonth.atDay(1).format(MONTH_FORMATTER)));
+        }
         LocalDate firstDay = displayedMonth.atDay(1);
         int leadingBlanks = firstDay.getDayOfWeek().getValue() - 1;
         int daysInMonth = displayedMonth.lengthOfMonth();
-        int occupiedCells = leadingBlanks + daysInMonth;
-        int cellCount = ((occupiedCells + 6) / 7) * 7;
-        for (int cell = 0; cell < cellCount; cell++) {
-            int day = cell - leadingBlanks + 1;
-            if (day < 1 || day > daysInMonth) {
-                JLabel blank = new JLabel();
-                blank.setPreferredSize(new Dimension(38, 38));
-                dayGrid.add(blank);
-            } else {
-                dayGrid.add(createDayButton(displayedMonth.atDay(day)));
+        for (int cell = 0; cell < dayButtons.length; cell++) {
+            JToggleButton button = dayButtons[cell];
+            LocalDate date = buttonDates[cell];
+            if (monthChanged) {
+                int day = cell - leadingBlanks + 1;
+                date = day < 1 || day > daysInMonth ? null : firstDay.withDayOfMonth(day);
+                buttonDates[cell] = date;
+                button.setName(date == null ? null : "calendarDay-" + date);
+                button.setText(date == null ? "" : Integer.toString(day));
+                button.setVisible(date != null);
+                button.setEnabled(date != null);
             }
+            if (date == null) continue;
+            button.setSelected(date.equals(selectedDate));
+            int style = date.equals(today) ? Font.BOLD : Font.PLAIN;
+            if (button.getFont().getStyle() != style) {
+                button.setFont(button.getFont().deriveFont(style));
+            }
+            if (monthChanged || markersChanged) updateDayDescription(button, date);
         }
-        dayGrid.revalidate();
+        renderedMonth = displayedMonth;
+        renderedSelection = selectedDate;
+        renderedToday = today;
+        renderedDatesRevision = availableDatesRevision;
         dayGrid.repaint();
-        popup.pack();
     }
 
-    private AbstractButton createDayButton(LocalDate date) {
-        boolean hasEntries = availableDates.contains(date);
-        JToggleButton button = new JToggleButton(Integer.toString(date.getDayOfMonth()));
-        button.setName("calendarDay-" + date);
-        button.setSelected(date.equals(selectedDate));
+    private JToggleButton createDayButton(int cell) {
+        JToggleButton button = new JToggleButton();
         button.putClientProperty("JButton.buttonType", "roundRect");
         button.setMargin(new Insets(3, 3, 3, 3));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setIcon(new DayMarkerIcon(hasEntries));
+        button.setIcon(EMPTY_MARKER);
         button.setHorizontalTextPosition(SwingConstants.CENTER);
         button.setVerticalTextPosition(SwingConstants.TOP);
         button.setIconTextGap(0);
         button.setPreferredSize(new Dimension(38, 38));
-        button.getAccessibleContext().setAccessibleName(
-                date.format(ACCESSIBLE_FORMATTER)
-        );
+        button.addActionListener(event -> {
+            LocalDate date = buttonDates[cell];
+            if (date != null) {
+                button.setSelected(true);
+                selectFromCalendar(date);
+            }
+        });
+        return button;
+    }
+
+    private void updateDayDescription(JToggleButton button, LocalDate date) {
+        boolean hasEntries = availableDates.contains(date);
+        button.setIcon(hasEntries ? ENTRY_MARKER : EMPTY_MARKER);
+        String readableDate = date.format(ACCESSIBLE_FORMATTER);
+        button.getAccessibleContext().setAccessibleName(readableDate);
         button.getAccessibleContext().setAccessibleDescription(
                 hasEntries ? "Tiene registros" : "Sin registros"
         );
         button.setToolTipText(hasEntries
-                ? date.format(ACCESSIBLE_FORMATTER) + " · Tiene registros"
-                : date.format(ACCESSIBLE_FORMATTER));
-        if (date.equals(LocalDate.now())) {
-            button.setFont(button.getFont().deriveFont(Font.BOLD));
-        }
-        button.addActionListener(event -> selectFromCalendar(date));
-        return button;
+                ? readableDate + " · Tiene registros"
+                : readableDate);
     }
 
     private void selectFromCalendar(LocalDate date) {

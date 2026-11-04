@@ -35,7 +35,7 @@ import com.adelylria.ringlog.storage.AppPaths;
 
 public final class Database {
 
-    public static final int SCHEMA_VERSION = 5;
+    public static final int SCHEMA_VERSION = 6;
 
     private static final String SCHEMA_RESOURCE = "/database/schema.sql";
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
@@ -46,13 +46,14 @@ public final class Database {
             Map.entry("place", Set.of("id", "stable_key", "name", "locality", "latitude",
                     "longitude", "autonomous_community", "country", "notes", "is_favorite",
                     "is_default", "active", "created_at", "updated_at")),
+            Map.entry("capture_method", Set.of("id", "stable_key", "name", "active")),
             Map.entry("bird_event", Set.of("id", "stable_key", "migration_key", "bird_id",
                     "event_type", "event_date", "event_time", "place_id", "location_text",
                     "sex_code", "age_euring_code", "fat_score", "muscle_score",
                     "ringer_initials", "status", "reproductive_status", "moult_intensity",
                     "moult_extension", "bird_condition", "return_status", "wing", "p3",
                     "torso", "weight", "observations", "clouds", "rain",
-                    "thermal_sensation", "wind", "capture_type", "is_dead", "source_name",
+                    "thermal_sensation", "wind", "capture_type", "capture_method_id", "is_dead", "source_name",
                     "source_reference", "review_status", "review_note", "created_at", "updated_at")),
             Map.entry("event_photo", Set.of("id", "stable_key", "event_id", "file_name",
                     "file_path", "mime_type", "source_name", "source_reference",
@@ -95,6 +96,8 @@ public final class Database {
             "idx_species_stable_key",
             "idx_bird_stable_key",
             "idx_place_stable_key",
+            "idx_capture_method_stable_key",
+            "idx_event_capture_method",
             "idx_event_stable_key",
             "idx_photo_stable_key",
             "idx_event_migration_key",
@@ -447,7 +450,7 @@ public final class Database {
     }
 
     private static void validateStableKeys(Connection connection) throws SQLException {
-        for (String table : Set.of("species", "bird", "place", "bird_event", "event_photo")) {
+        for (String table : Set.of("species", "bird", "place", "capture_method", "bird_event", "event_photo")) {
             try (Statement statement = connection.createStatement();
                  ResultSet invalid = statement.executeQuery("""
                          SELECT COUNT(*)

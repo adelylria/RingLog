@@ -107,6 +107,9 @@ public class BirdEventEntity {
     @DatabaseField(columnName = "capture_type")
     private String captureType;
 
+    @DatabaseField(columnName = "capture_method_id")
+    private Long captureMethodId;
+
     @DatabaseField(columnName = "is_dead", canBeNull = false)
     private boolean dead;
 
@@ -157,6 +160,7 @@ public class BirdEventEntity {
         thermalSensation = blankToNull(input.thermalSensation());
         wind = blankToNull(input.wind());
         captureType = blankToNull(input.captureType());
+        captureMethodId = input.captureMethodId();
         dead = input.dead();
     }
 
@@ -394,6 +398,14 @@ public class BirdEventEntity {
 
     public String getCaptureType() {
         return captureType;
+    }
+
+    public Long getCaptureMethodId() {
+        return captureMethodId;
+    }
+
+    public void setCaptureMethodId(Long captureMethodId) {
+        this.captureMethodId = captureMethodId;
     }
 
     public void setCaptureType(String captureType) {

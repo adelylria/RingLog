@@ -81,6 +81,9 @@ public final class SchemaMigrationRegistryTest {
         require(new V4ToV5PlaceRegionMigration().executionType()
                         == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
                 "The real v4 -> v5 migration must be SQL transactional");
+        require(new V5ToV6CaptureMethodMigration().executionType()
+                        == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
+                "The real v5 -> v6 migration must be SQL transactional");
     }
 
     private static void requireFailure(ThrowingRunnable action, String message) {

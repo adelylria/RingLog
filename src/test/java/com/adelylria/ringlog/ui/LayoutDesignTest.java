@@ -13,6 +13,7 @@ import com.adelylria.ringlog.ui.panels.CaptureDetailPanel;
 import com.adelylria.ringlog.ui.panels.HomePanel;
 import com.adelylria.ringlog.ui.panels.ReportsPanel;
 import com.adelylria.ringlog.ui.panels.PlacePanel;
+import com.adelylria.ringlog.ui.panels.CaptureMethodsPanel;
 import com.adelylria.ringlog.ui.panels.SpeciesPanel;
 import com.adelylria.ringlog.ui.theme.UiKit;
 import com.adelylria.ringlog.ui.theme.ThemeManager;
@@ -64,10 +65,12 @@ public final class LayoutDesignTest {
 
     public static void sidebarUsesRenderableIcons() {
         Sidebar sidebar = new Sidebar(ignored -> { });
-        List<JButton> buttons = findButtons(sidebar);
+        List<JButton> buttons = findButtons(sidebar).stream()
+                .filter(button -> button.getText() != null && !button.getText().isBlank())
+                .toList();
 
-        require(buttons.size() == 8,
-                "Sidebar should expose all eight navigation actions, including reviews");
+        require(buttons.size() == 9,
+                "Sidebar should expose all nine navigation actions, including capture methods");
         require(buttons.stream().allMatch(button -> button.getIcon() != null),
                 "Navigation icons should be painted icons, not missing font glyphs");
     }
@@ -84,9 +87,11 @@ public final class LayoutDesignTest {
         CatalogRepository unusedRepository = new CatalogRepository("unused.db");
         SpeciesPanel species = new SpeciesPanel(unusedRepository);
         PlacePanel places = new PlacePanel(unusedRepository);
+        CaptureMethodsPanel methods = new CaptureMethodsPanel(unusedRepository);
 
         requireCatalogLayout(species, "Species");
         requireCatalogLayout(places, "Places");
+        requireCatalogLayout(methods, "Capture methods");
     }
 
     public static void reportStatsKeepTheirNaturalHeight() {

@@ -40,21 +40,31 @@ public final class RingLogExportReader {
     private static final long MAX_MEDIA_BYTES = 2_000_000_000L;
 
     public NativeExportModel read(ImportSource source) throws ImportValidationException {
-        WorkbookProfile profile = new WorkbookFormatDetector().detect(source);
-        if (profile.format() != ImportFormat.RINGLOG_EXPORT_V1) {
-            throw new ImportValidationException(
-                    "El lector nativo recibió un formato diferente."
-            );
+        if (source == null) {
+            throw new ImportValidationException("No hay una fuente de importación abierta.");
         }
-        try (InputStream input = Files.newInputStream(source.workbookPath());
-             Workbook workbook = WorkbookFactory.create(input)) {
+        try (Workbook workbook = WorkbookFactory.create(source.workbookPath().toFile(), null, true)) {
+            WorkbookProfile profile = new WorkbookFormatDetector().detect(source, workbook);
+            if (profile.format() != ImportFormat.RINGLOG_EXPORT_V1) {
+                throw new ImportValidationException(
+                        "El lector nativo recibió un formato diferente."
+                );
+            }
             rejectFormulas(workbook);
             Map<String, String> textStore = readTextStore(workbook);
             Map<String, List<NativeRow>> sheets = new LinkedHashMap<>();
+            boolean legacySchema = Set.of("3", "4", "5")
+                    .contains(profile.metadata().get("schema_version"));
             int totalRows = 0;
             for (Map.Entry<String, List<String>> definition : NativeSchema.SHEETS.entrySet()) {
+                if (legacySchema && "capture_methods".equals(definition.getKey())
+                        && workbook.getSheet(definition.getKey()) == null) {
+                    sheets.put(definition.getKey(), List.of());
+                    continue;
+                }
                 List<NativeRow> rows = readRows(
-                        workbook, definition.getKey(), definition.getValue(), textStore
+                        workbook, definition.getKey(), definition.getValue(), textStore,
+                        legacySchema
                 );
                 totalRows += rows.size();
                 if (totalRows > MAX_DATA_ROWS) {
@@ -87,13 +97,18 @@ public final class RingLogExportReader {
             Workbook workbook,
             String sheetName,
             List<String> columns,
-            Map<String, String> textStore
+            Map<String, String> textStore,
+            boolean legacySchema
     ) {
         Sheet sheet = requiredSheet(workbook, sheetName);
-        List<String> readableColumns = "places".equals(sheetName)
-                && headerMatches(sheet, NativeSchema.LEGACY_PLACE_COLUMNS)
-                ? NativeSchema.LEGACY_PLACE_COLUMNS
-                : columns;
+        List<String> readableColumns = columns;
+        if ("places".equals(sheetName)
+                && headerMatches(sheet, NativeSchema.LEGACY_PLACE_COLUMNS)) {
+            readableColumns = NativeSchema.LEGACY_PLACE_COLUMNS;
+        } else if (legacySchema && "events".equals(sheetName)
+                && headerMatches(sheet, NativeSchema.LEGACY_EVENT_COLUMNS)) {
+            readableColumns = NativeSchema.LEGACY_EVENT_COLUMNS;
+        }
         exactHeader(sheet, readableColumns);
         List<NativeRow> result = new ArrayList<>();
         for (int index = 1; index <= sheet.getLastRowNum(); index++) {
@@ -213,7 +228,7 @@ public final class RingLogExportReader {
 
     private static void validate(NativeExportModel model, boolean packaged) {
         UUID.fromString(requiredMetadata(model, "export_id"));
-        if (!Set.of("3", "4", "5").contains(requiredMetadata(model, "schema_version"))) {
+        if (!Set.of("3", "4", "5", "6").contains(requiredMetadata(model, "schema_version"))) {
             throw new IllegalArgumentException(
                     "El export no corresponde a un schema RingLog compatible."
             );
@@ -221,6 +236,17 @@ public final class RingLogExportReader {
         Set<String> species = unique(model.rows("species"), "stable_key", "species");
         Set<String> birds = unique(model.rows("birds"), "stable_key", "birds");
         Set<String> places = unique(model.rows("places"), "stable_key", "places");
+        Set<String> captureMethods = unique(
+                model.rows("capture_methods"), "stable_key", "capture methods"
+        );
+        Set<String> captureMethodNames = new HashSet<>();
+        for (NativeRow method : model.rows("capture_methods")) {
+            String name = required(method, "name").trim();
+            if (name.isBlank() || !captureMethodNames.add(name.toUpperCase(java.util.Locale.ROOT))
+                    || !Set.of("0", "1").contains(required(method, "active"))) {
+                throw new IllegalArgumentException("Catálogo de métodos de captura no válido.");
+            }
+        }
         Set<String> events = unique(model.rows("events"), "stable_key", "events");
         unique(model.rows("photos"), "stable_key", "photos");
         Set<String> batches = unique(model.rows("import_batches"), "stable_key", "batches");
@@ -234,6 +260,7 @@ public final class RingLogExportReader {
         references(model.rows("birds"), "species_stable_key", species, false);
         references(model.rows("events"), "bird_stable_key", birds, false);
         references(model.rows("events"), "place_stable_key", places, true);
+        references(model.rows("events"), "capture_method_stable_key", captureMethods, true);
         references(model.rows("photos"), "event_stable_key", events, false);
         references(model.rows("event_source_aliases"), "event_stable_key", events, false);
         references(model.rows("import_metadata"), "import_batch_stable_key", batches, false);

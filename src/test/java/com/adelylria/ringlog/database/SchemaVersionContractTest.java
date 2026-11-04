@@ -16,16 +16,16 @@ public final class SchemaVersionContractTest {
     private SchemaVersionContractTest() {
     }
 
-    public static void freshDatabaseUsesSchemaV5() throws Exception {
+    public static void freshDatabaseUsesSchemaV6() throws Exception {
         Path root = Files.createTempDirectory("ringlog-schema-v5-fresh-");
         try {
             Path database = root.resolve("data/ringlog.db");
             Database.initialize(database.toString());
 
-            require(userVersion(database) == 5,
-                    "A fresh RingLog database must advertise place-region schema v5");
-            require(Database.SCHEMA_VERSION == 5,
-                    "The shared current schema constant must be v5");
+            require(userVersion(database) == 6,
+                    "A fresh RingLog database must advertise capture-method schema v6");
+            require(Database.SCHEMA_VERSION == 6,
+                    "The shared current schema constant must be v6");
             require(hasColumn(database, "place", "autonomous_community")
                             && hasColumn(database, "place", "country"),
                     "A fresh database must include both administrative place fields");
@@ -88,7 +88,7 @@ public final class SchemaVersionContractTest {
             new MediaPathResolver(AppPaths.forDataRoot(root))
                     .resolveEventPhoto("events/ab/managed-photo.jpg");
 
-            setUserVersion(database, 5);
+            setUserVersion(database, Database.SCHEMA_VERSION);
 
             try (Connection connection = Database.getConnection(database.toString());
                  Statement statement = connection.createStatement()) {
@@ -164,6 +164,52 @@ public final class SchemaVersionContractTest {
             ), "Unsafe database references must be rejected by the managed resolver boundary");
         } finally {
             deleteDirectory(root);
+        }
+    }
+
+    public static void v5CaptureMethodMigrationPreservesHistoricalEvents() throws Exception {
+        Path database = Files.createTempFile("ringlog-method-v5-to-v6-", ".db");
+        try (Connection connection = Database.getConnection(database.toString());
+             Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    CREATE TABLE bird_event (
+                        id INTEGER PRIMARY KEY,
+                        stable_key TEXT NOT NULL,
+                        capture_type TEXT
+                    )
+                    """);
+            statement.execute("""
+                    INSERT INTO bird_event(id, stable_key, capture_type)
+                    VALUES (7, '50000000-0000-0000-0000-000000000007', 'RECAPTURE')
+                    """);
+            statement.execute("PRAGMA user_version = 5");
+            connection.setAutoCommit(false);
+            V5ToV6CaptureMethodMigration migration = new V5ToV6CaptureMethodMigration();
+            migration.migrate(connection);
+            migration.validate(connection);
+            statement.execute("PRAGMA user_version = 6");
+            connection.commit();
+            require(userVersion(database) == 6, "The capture-method migration must finish at schema v6");
+            try (ResultSet row = statement.executeQuery("SELECT id, stable_key, capture_type, capture_method_id FROM bird_event")) {
+                require(row.next() && row.getLong("id") == 7
+                                && "50000000-0000-0000-0000-000000000007".equals(row.getString("stable_key"))
+                                && "RECAPTURE".equals(row.getString("capture_type"))
+                                && row.getObject("capture_method_id") == null,
+                        "Migration must preserve identity and classification without inventing a capture method");
+            }
+            try (ResultSet rows = statement.executeQuery("SELECT stable_key, name FROM capture_method ORDER BY name")) {
+                require(rows.next() && "FILATS".equals(rows.getString("name")), "FILATS must be seeded");
+                java.util.UUID.fromString(rows.getString("stable_key"));
+                require(rows.next() && "RED JAPONESA".equals(rows.getString("name")), "RED JAPONESA must be seeded");
+                java.util.UUID.fromString(rows.getString("stable_key"));
+                require(!rows.next(), "Migration must create exactly the two requested initial methods");
+            }
+            require(hasColumn(database, "bird_event", "capture_method_id"), "The event must reference the new catalog");
+            try (ResultSet violations = statement.executeQuery("PRAGMA foreign_key_check")) {
+                require(!violations.next(), "Capture-method migration must preserve foreign-key integrity");
+            }
+        } finally {
+            Files.deleteIfExists(database);
         }
     }
 
@@ -264,7 +310,8 @@ public final class SchemaVersionContractTest {
     }
 
     public static void main(String[] args) throws Exception {
-        freshDatabaseUsesSchemaV5();
+        freshDatabaseUsesSchemaV6();
+        v5CaptureMethodMigrationPreservesHistoricalEvents();
         schemaV3UsesLegacyMediaSemantics();
         v3DatabaseIsRecognizedAsNeedingMediaMigration();
         schemaV4UsesManagedMediaReferences();

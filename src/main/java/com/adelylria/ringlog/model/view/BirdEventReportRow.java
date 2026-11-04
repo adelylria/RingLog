@@ -79,6 +79,10 @@ public record BirdEventReportRow(
         return detail.captureType();
     }
 
+    public String captureMethod() {
+        return detail.captureMethod();
+    }
+
     public String sexCode() {
         return detail.sexCode();
     }

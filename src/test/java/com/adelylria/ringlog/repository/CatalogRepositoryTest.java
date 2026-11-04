@@ -9,6 +9,8 @@ import java.util.Comparator;
 import java.util.List;
 
 import com.adelylria.ringlog.database.Database;
+import com.adelylria.ringlog.model.EventType;
+import com.adelylria.ringlog.model.input.BirdEventInput;
 import com.adelylria.ringlog.model.input.PlaceInput;
 import com.adelylria.ringlog.model.input.SpeciesInput;
 import com.adelylria.ringlog.model.view.PlaceSummary;
@@ -119,6 +121,78 @@ public final class CatalogRepositoryTest {
         return stableKey(database, "place", placeId);
     }
 
+    public static void captureMethodsAreReusableAndPreserveHistoricalEvents() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-capture-method-");
+        Path database = root.resolve("ringlog.db");
+        try {
+            Database.initialize(database.toString());
+            CatalogRepository catalog = new CatalogRepository(database.toString());
+            require(catalog.findCaptureMethodOptions().stream().map(item -> item.name()).toList()
+                            .equals(List.of("FILATS", "RED JAPONESA")),
+                    "The capture method catalog must start with the requested methods");
+            long method = catalog.saveCaptureMethod(null, "  Lazo   manual  ");
+            String identity = stableKey(database, "capture_method", method);
+            require(catalog.findCaptureMethods().stream().anyMatch(item -> item.id() == method
+                            && "Lazo manual".equals(item.name())),
+                    "Custom methods must be stored and whitespace normalized");
+            requireInvalid(() -> catalog.saveCaptureMethod(null, "lazo manual"),
+                    "Method names must not be duplicated with different capitalization");
+            requireInvalid(() -> catalog.saveCaptureMethod(null, " \t "),
+                    "Empty method names must not be saved");
+            catalog.saveCaptureMethod(method, "Lazo actualizado");
+            require(identity.equals(stableKey(database, "capture_method", method)),
+                    "Renaming must keep the method identity");
+            long species = catalog.insertSpecies(new SpeciesInput(null, "Turdus philomelos", null));
+            BirdEventRepository events = new BirdEventRepository(database.toString());
+            long event = events.insert(captureMethodInput("CAP-1", species, method));
+            require(events.findDetail(event).orElseThrow().captureMethodId().equals(method)
+                            && "Lazo actualizado".equals(events.findDetail(event).orElseThrow().captureMethod()),
+                    "Events must save the selected method and expose its catalog name");
+            catalog.setCaptureMethodActive(method, false);
+            require(catalog.findCaptureMethodOptions().stream().noneMatch(item -> item.id() == method),
+                    "Archived methods must disappear from the options for new events");
+            require(catalog.findCaptureMethods().stream().anyMatch(item -> item.id() == method && !item.active()),
+                    "Archived methods must remain available in catalog management");
+            events.update(event, captureMethodInput("CAP-1", species, method));
+            require(events.findDetail(event).orElseThrow().captureMethodId().equals(method),
+                    "Editing an event must preserve its archived capture method");
+            require("Lazo actualizado".equals(events.findReportRows(List.of(event)).get(0).detail().captureMethod()),
+                    "Report projections must retain the capture method, even when archived");
+            requireInvalid(() -> events.insert(captureMethodInput("CAP-2", species, method)),
+                    "An archived method must not be assigned to another event");
+            requireInvalid(() -> events.insert(captureMethodInput("CAP-3", species, 99999L)),
+                    "A missing capture method must fail with domain validation");
+            events.update(event, captureMethodInput("CAP-1", species, null));
+            require(events.findDetail(event).orElseThrow().captureMethodId() == null,
+                    "The capture method must remain optional and clearable");
+            catalog.setCaptureMethodActive(method, true);
+            require(catalog.findCaptureMethodOptions().stream().anyMatch(item -> item.id() == method),
+                    "An archived method must be restorable without changing its identity");
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    private static BirdEventInput captureMethodInput(String ring, long species, Long method) {
+        return new BirdEventInput(
+                ring, species, EventType.RINGING, "2026-11-04", null,
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, false, method
+        );
+    }
+
+    private static void requireInvalid(Runnable operation, String message) {
+        try {
+            operation.run();
+            throw new AssertionError(message);
+        } catch (IllegalArgumentException expected) {
+            // Expected validation.
+        }
+    }
+
     private static String stableKey(Path database, String table, long entityId)
             throws Exception {
         try (Connection connection = Database.getReadOnlyConnection(database.toString());
@@ -152,6 +226,7 @@ public final class CatalogRepositoryTest {
         placesCanBeCreatedAndEditedWithoutChangingTheirIdentity();
         changingTheDefaultPlaceKeepsOnlyOneDefault();
         speciesCanBeEditedWithoutChangingTheirIdentity();
+        captureMethodsAreReusableAndPreserveHistoricalEvents();
         System.out.println("CatalogRepositoryTest: PASS");
     }
 }

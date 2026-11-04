@@ -12,9 +12,12 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.UUID;
 
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
@@ -23,6 +26,8 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 
 import com.adelylria.ringlog.database.Database;
+import com.adelylria.ringlog.backup.BackupExportService;
+import com.adelylria.ringlog.importer.LegacyImportService;
 import com.adelylria.ringlog.importexport.nativeformat.ExportResult;
 import com.adelylria.ringlog.importexport.nativeformat.RingLogExporter;
 import com.adelylria.ringlog.importexport.service.ConflictResolutionService;
@@ -40,6 +45,337 @@ public final class NativeExportRoundTripTest {
     private static final Path LEGACY_FIXTURE = LegacyV52TestFixture.path();
 
     private NativeExportRoundTripTest() {
+    }
+
+    public static void repeatedLongTextRemainsSelfVerifyingAndLossless() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-native-repeated-text-");
+        try {
+            AppPaths source = AppPaths.forDataRoot(root.resolve("source"));
+            Database.initialize(source.databasePath().toString());
+            String observations = "A".repeat(20_000);
+            String clouds = "\u0000".repeat(20_000);
+            try (Connection connection = Database.getConnection(source.databasePath().toString())) {
+                connection.setAutoCommit(false);
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("""
+                            INSERT INTO species(stable_key, scientific_name)
+                            VALUES('40404040-4040-4040-8040-404040404040', 'Species repeated text test')
+                            """);
+                    statement.execute("""
+                            INSERT INTO bird(stable_key, ring_number, species_id)
+                            VALUES('50505050-5050-4050-8050-505050505050', 'REPEAT-01', 1)
+                            """);
+                }
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                                               observations, clouds)
+                        VALUES(?, 1, ?, ?, ?, ?)
+                        """)) {
+                    for (int index = 1; index <= 513; index++) {
+                        statement.setString(1, UUID.nameUUIDFromBytes(
+                                ("repeated-text-event-" + index).getBytes(StandardCharsets.UTF_8)).toString());
+                        statement.setString(2, index == 1 ? "RINGING" : "CONTROL");
+                        statement.setString(3, java.time.LocalDate.of(2026, 1, 1).plusDays(index).toString());
+                        statement.setString(4, observations);
+                        statement.setString(5, clouds);
+                        statement.addBatch();
+                    }
+                    statement.executeBatch();
+                }
+                connection.commit();
+            }
+            ExportResult exported = new RingLogExporter(source.databasePath().toString())
+                    .exportTo(root.resolve("repeated-text"));
+            AppPaths restored = AppPaths.forDataRoot(root.resolve("restored"));
+            try (ImportPlan plan = new ImportCoordinator().analyze(exported.file())) {
+                new ImportTransactionService(restored.databasePath().toString(), restored).execute(plan);
+            }
+            try (Connection connection = Database.getReadOnlyConnection(restored.databasePath().toString());
+                 PreparedStatement statement = connection.prepareStatement("""
+                         SELECT COUNT(*) FROM bird_event WHERE observations = ? AND clouds = ?
+                         """)) {
+                statement.setString(1, observations);
+                statement.setString(2, clouds);
+                try (ResultSet result = statement.executeQuery()) {
+                    require(result.next() && result.getInt(1) == 513,
+                            "Highly repeated long text and NUL must self-validate and restore exactly");
+                }
+            }
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    public static void largeStreamingExportPreservesFlushedRowsOverflowTextAndBinaries() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-native-streaming-");
+        try {
+            AppPaths source = AppPaths.forDataRoot(root.resolve("source"));
+            Database.initialize(source.databasePath().toString());
+            StringBuilder overflowText = new StringBuilder();
+            for (int index = 0; index < 800; index++) {
+                overflowText.append("  Café 中文 🐦 <>&\u0000\r\n")
+                        .append(UUID.nameUUIDFromBytes(("overflow-" + index)
+                                .getBytes(StandardCharsets.UTF_8)));
+            }
+            String overflow = overflowText.toString();
+            try (Connection connection = Database.getConnection(source.databasePath().toString())) {
+                connection.setAutoCommit(false);
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("""
+                            INSERT INTO species(stable_key, scientific_name)
+                            VALUES('10101010-1010-4010-8010-101010101010', 'Species streaming test')
+                            """);
+                    statement.execute("""
+                            INSERT INTO bird(stable_key, ring_number, species_id)
+                            VALUES('20202020-2020-4020-8020-202020202020', 'STREAM-01', 1)
+                            """);
+                    statement.execute("""
+                            INSERT INTO capture_method(stable_key, name, active)
+                            VALUES('30303030-3030-4030-8030-303030303030', 'Método histórico 🐦', 0)
+                            """);
+                }
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                                               observations, clouds, rain, thermal_sensation,
+                                               capture_type, capture_method_id)
+                        VALUES(?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """)) {
+                    for (int index = 1; index <= 513; index++) {
+                        statement.setString(1, UUID.nameUUIDFromBytes(
+                                ("streaming-event-" + index).getBytes(StandardCharsets.UTF_8)).toString());
+                        statement.setString(2, index == 1 ? "RINGING" : "CONTROL");
+                        statement.setString(3, java.time.LocalDate.of(2026, 1, 1).plusDays(index).toString());
+                        statement.setString(4, index % 127 == 0 ? overflow
+                                : index % 7 == 0 ? null : index % 7 == 1 ? ""
+                                : "  Observación " + index + " — café 中文 🐦\r\n  ");
+                        statement.setString(5, index % 3 == 0 ? null : index % 3 == 1 ? "" : "  ");
+                        statement.setString(6, index % 2 == 0 ? "" : null);
+                        statement.setString(7, "22°\u0000");
+                        statement.setString(8, index % 2 == 0 ? "RECAPTURE" : null);
+                        statement.setObject(9, index % 3 == 0 ? null : index % 3 == 1 ? 1L : 3L);
+                        statement.addBatch();
+                    }
+                    statement.executeBatch();
+                }
+                connection.commit();
+            }
+            addEventPhoto(source.databasePath(), source);
+            Map<String, List<String>> expected = streamingValues(source.databasePath());
+            Set<Path> temporarySheets = streamingTemporarySheets();
+            ExportResult result = new RingLogExporter(source.databasePath().toString(),
+                    new MediaPathResolver(source)).exportTo(root.resolve("native-streaming"));
+            require(result.binaryCount() == 1 && result.file().toString().endsWith(".zip"),
+                    "A large native export must retain its physical photograph");
+            require(temporarySheets.equals(streamingTemporarySheets()),
+                    "A completed streaming export must dispose all temporary sheet XML");
+            try (ImportSource archive = ImportSource.open(result.file());
+                 InputStream input = Files.newInputStream(archive.workbookPath());
+                 Workbook workbook = WorkbookFactory.create(input)) {
+                Sheet events = workbook.getSheet("events");
+                require(events.getLastRowNum() == 513,
+                        "Flushing the writer window must not discard earlier or final event rows");
+                require(events.getRow(1).getCell(0).getCellType()
+                                == org.apache.poi.ss.usermodel.CellType.STRING,
+                        "Native encoded cells must remain readable strings");
+                require(events.getPaneInformation() != null && events.getPaneInformation().isFreezePane(),
+                        "Streaming must retain the frozen native header row");
+                require(workbook.getSheet("text_content").getLastRowNum() > 0
+                                && workbook.getSheetVisibility(workbook.getSheetIndex("text_content"))
+                                == org.apache.poi.ss.usermodel.SheetVisibility.VERY_HIDDEN,
+                        "Overflow text chunks must remain available in the hidden text store");
+            }
+            AppPaths restored = AppPaths.forDataRoot(root.resolve("restored"));
+            try (ImportPlan plan = new ImportCoordinator().analyze(result.file())) {
+                new ImportTransactionService(restored.databasePath().toString(), restored).execute(plan);
+            }
+            require(expected.equals(streamingValues(restored.databasePath())),
+                    "All flushed rows must preserve null, empty, whitespace, Unicode, NUL and overflow text");
+            require(rows(source.databasePath(), "SELECT stable_key || '|' || name || '|' || active FROM capture_method")
+                            .equals(rows(restored.databasePath(),
+                                    "SELECT stable_key || '|' || name || '|' || active FROM capture_method")),
+                    "The streaming export must retain custom and archived capture methods");
+            assertStoredMedia(restored.databasePath(), restored, 1);
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    private static Map<String, List<String>> streamingValues(Path database) throws Exception {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        try (Connection connection = Database.getReadOnlyConnection(database.toString());
+             Statement statement = connection.createStatement();
+             ResultSet row = statement.executeQuery("""
+                     SELECT e.stable_key, e.observations, e.clouds, e.rain,
+                            e.thermal_sensation, e.capture_type, cm.stable_key AS method
+                     FROM bird_event e LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
+                     ORDER BY e.stable_key
+                     """)) {
+            while (row.next()) {
+                result.put(row.getString("stable_key"), java.util.Arrays.asList(
+                        row.getString("observations"), row.getString("clouds"), row.getString("rain"),
+                        row.getString("thermal_sensation"), row.getString("capture_type"), row.getString("method")));
+            }
+        }
+        return result;
+    }
+
+    private static Set<Path> streamingTemporarySheets() throws Exception {
+        Path directory = Path.of(System.getProperty("java.io.tmpdir"), "poifiles");
+        if (!Files.isDirectory(directory)) return Set.of();
+        try (var files = Files.list(directory)) {
+            return files.filter(path -> path.getFileName().toString().startsWith("poi-sxssf-sheet"))
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
+    public static void captureMethodsSurviveExportsAndOldExportsRemainCompatible() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-capture-method-roundtrip-");
+        try {
+            AppPaths sourcePaths = AppPaths.forDataRoot(root.resolve("source"));
+            Path source = sourcePaths.databasePath();
+            Database.initialize(source.toString());
+            try (Connection connection = Database.getConnection(source.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        INSERT INTO capture_method(stable_key, name, active)
+                        VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'CEPO MANUAL', 0)
+                        """);
+                statement.execute("""
+                        UPDATE capture_method SET name = 'FILATS ESPECIALES', active = 0
+                        WHERE stable_key = '39d6ec44-2b19-4b49-a69c-d2af0aa31f8d'
+                        """);
+                statement.execute("""
+                        INSERT INTO species(stable_key, scientific_name)
+                        VALUES('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Turdus philomelos')
+                        """);
+                statement.execute("""
+                        INSERT INTO bird(stable_key, ring_number, species_id)
+                        VALUES('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'METHOD-01', 1)
+                        """);
+                statement.execute("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                                               capture_type, capture_method_id)
+                        VALUES('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1, 'RINGING', '2026-11-01',
+                               'RECAPTURE', (SELECT id FROM capture_method WHERE name='CEPO MANUAL')),
+                              ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 1, 'CONTROL', '2026-11-02',
+                               NULL, (SELECT id FROM capture_method WHERE name='FILATS ESPECIALES')),
+                              ('ffffffff-ffff-4fff-8fff-ffffffffffff', 1, 'CONTROL', '2026-11-03',
+                               NULL, NULL)
+                        """);
+            }
+            Path nativeFile = new RingLogExporter(source.toString()).exportTo(root.resolve("native")).file();
+            Path backupFile = new BackupExportService(source.toString()).exportTo(root.resolve("backup")).file();
+            String methods = "SELECT stable_key || '|' || name || '|' || active FROM capture_method";
+            String assignments = """
+                    SELECT e.event_date || '|' || COALESCE(cm.stable_key, '<null>') || '|'
+                           || COALESCE(cm.name, '<null>') || '|' || COALESCE(e.capture_type, '<null>')
+                    FROM bird_event e LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
+                    """;
+            for (Path file : List.of(nativeFile, backupFile)) {
+                AppPaths target = AppPaths.forDataRoot(root.resolve("restore-" + file.getFileName()));
+                try (ImportPlan plan = new ImportCoordinator().analyze(file)) {
+                    new ImportTransactionService(target.databasePath().toString(), target).execute(plan);
+                }
+                require(rows(source, methods).equals(rows(target.databasePath(), methods)),
+                        "Custom, renamed and archived methods must survive export/restore");
+                require(rows(source, assignments).equals(rows(target.databasePath(), assignments)),
+                        "Method selection and independent historical classification must survive restoration");
+                try (Connection connection = Database.getConnection(target.databasePath().toString());
+                     Statement statement = connection.createStatement()) {
+                    statement.execute("UPDATE bird_event SET capture_method_id = NULL WHERE event_type='RINGING'");
+                }
+                Path repeated = distinctImportIdentity(file,
+                        root.resolve("conflict-" + file.getFileName()));
+                boolean rejected = false;
+                try (ImportPlan plan = new ImportCoordinator().analyze(repeated)) {
+                    new ImportTransactionService(target.databasePath().toString(), target).execute(plan);
+                } catch (ImportExecutionException expected) {
+                    rejected = true;
+                }
+                require(rejected && scalarLong(target.databasePath(), """
+                                SELECT COUNT(*) FROM bird_event
+                                WHERE event_type='RINGING' AND capture_method_id IS NULL
+                                """) == 1,
+                        "A conflicting capture method must abort restoration without silently replacing data: "
+                                + file.getFileName() + ", rejected=" + rejected);
+                Path oldFile = withoutCaptureMethods(file,
+                        root.resolve("old-" + file.getFileName()));
+                AppPaths oldTarget = AppPaths.forDataRoot(root.resolve("old-restore-" + file.getFileName()));
+                try (ImportPlan plan = new ImportCoordinator().analyze(oldFile)) {
+                    new ImportTransactionService(oldTarget.databasePath().toString(), oldTarget).execute(plan);
+                }
+                require(scalarLong(oldTarget.databasePath(),
+                                "SELECT COUNT(*) FROM bird_event WHERE capture_method_id IS NOT NULL") == 0,
+                        "Files predating capture methods must not invent assignments");
+            }
+            AppPaths legacyTarget = AppPaths.forDataRoot(root.resolve("legacy-service"));
+            new LegacyImportService(legacyTarget.databasePath().toString(), legacyTarget)
+                    .importWorkbook(backupFile);
+            require(rows(source, methods).equals(rows(legacyTarget.databasePath(), methods))
+                            && rows(source, assignments).equals(rows(legacyTarget.databasePath(), assignments)),
+                    "The public legacy backup service must preserve the catalogue and assignments too");
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    private static Path withoutCaptureMethods(Path source, Path destination) throws Exception {
+        try (InputStream input = Files.newInputStream(source);
+             Workbook workbook = WorkbookFactory.create(input)) {
+            workbook.removeSheetAt(workbook.getSheetIndex("capture_methods"));
+            Sheet events = workbook.getSheet("events");
+            int column = events.getRow(0).getLastCellNum() - 1;
+            require("capture_method_stable_key".equals(events.getRow(0).getCell(column).getStringCellValue()),
+                    "The method reference must extend the old event contract");
+            for (Row row : events) {
+                Cell cell = row.getCell(column);
+                if (cell != null) row.removeCell(cell);
+            }
+            Sheet metadata = workbook.getSheet("metadata");
+            for (int index = 1; index <= metadata.getLastRowNum(); index++) {
+                Row row = metadata.getRow(index);
+                if (row == null) continue;
+                String key = row.getCell(0).getStringCellValue();
+                if ("schema_version".equals(key)) replaceStringCell(row, 1, "5");
+                if ("capture_methods_count".equals(key)) metadata.removeRow(row);
+            }
+            try (OutputStream output = Files.newOutputStream(destination)) { workbook.write(output); }
+        }
+        return destination;
+    }
+
+    private static Path distinctImportIdentity(Path source, Path destination) throws Exception {
+        String exportId = UUID.randomUUID().toString();
+        try (InputStream input = Files.newInputStream(source);
+             Workbook workbook = WorkbookFactory.create(input)) {
+            Sheet metadata = workbook.getSheet("metadata");
+            Row marker = metadata.createRow(metadata.getLastRowNum() + 1);
+            marker.createCell(0).setCellValue("test_import_identity");
+            marker.createCell(1).setCellValue(java.util.UUID.randomUUID().toString());
+            for (Row row : metadata) {
+                if ("export_id".equals(row.getCell(0).getStringCellValue())) {
+                    replaceStringCell(row, 1, exportId);
+                }
+            }
+            try (OutputStream output = Files.newOutputStream(destination)) { workbook.write(output); }
+        }
+        try (InputStream input = Files.newInputStream(destination);
+             Workbook workbook = WorkbookFactory.create(input)) {
+            for (Row row : workbook.getSheet("metadata")) {
+                if ("export_id".equals(row.getCell(0).getStringCellValue())) {
+                    require(exportId.equals(row.getCell(1).getStringCellValue()),
+                            "The rewritten fixture must have a distinct serialized export identity");
+                }
+            }
+        }
+        return destination;
+    }
+
+    private static void replaceStringCell(Row row, int column, String value) {
+        // XSSF can retain an old inline-string element when setCellValue changes its value.
+        Cell previous = row.getCell(column);
+        if (previous != null) row.removeCell(previous);
+        row.createCell(column).setCellValue(value);
     }
 
     public static void binaryStateUsesZipAndRestoresTraceabilityWithoutWizard()
@@ -235,11 +571,7 @@ public final class NativeExportRoundTripTest {
                 }
                 for (int target = 3; target <= 10; target++) {
                     Cell sourceCell = row.getCell(target + 2);
-                    Cell targetCell = row.getCell(target);
-                    if (targetCell == null) {
-                        targetCell = row.createCell(target);
-                    }
-                    targetCell.setCellValue(sourceCell.getStringCellValue());
+                    replaceStringCell(row, target, sourceCell.getStringCellValue());
                 }
                 for (int column : new int[]{11, 12}) {
                     Cell cell = row.getCell(column);
@@ -252,7 +584,7 @@ public final class NativeExportRoundTripTest {
             for (int index = 1; index <= metadata.getLastRowNum(); index++) {
                 Row row = metadata.getRow(index);
                 if (row != null && "schema_version".equals(row.getCell(0).getStringCellValue())) {
-                    row.getCell(1).setCellValue("4");
+                    replaceStringCell(row, 1, "4");
                     break;
                 }
             }
@@ -377,6 +709,9 @@ public final class NativeExportRoundTripTest {
     }
 
     public static void main(String[] args) throws Exception {
+        repeatedLongTextRemainsSelfVerifyingAndLossless();
+        largeStreamingExportPreservesFlushedRowsOverflowTextAndBinaries();
+        captureMethodsSurviveExportsAndOldExportsRemainCompatible();
         binaryStateUsesZipAndRestoresTraceabilityWithoutWizard();
         mediaFreeStateMayUsePlainXlsx();
         System.out.println("NativeExportRoundTripTest: PASS");

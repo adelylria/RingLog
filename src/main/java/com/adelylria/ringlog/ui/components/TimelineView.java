@@ -18,6 +18,9 @@ import com.adelylria.ringlog.ui.theme.UiKit;
 public class TimelineView extends JPanel {
 
     private final JPanel content;
+    private List<BirdEventTimelineItem> renderedItems = List.of();
+    private Consumer<Long> currentOnOpen;
+    private String currentDate;
 
     public TimelineView() {
         super(new BorderLayout());
@@ -50,7 +53,20 @@ public class TimelineView extends JPanel {
             String emptyTitle,
             String emptyMessage
     ) {
-        content.removeAll();
+        int count = maximumItems > 0 ? Math.min(maximumItems, items.size()) : items.size();
+        List<BirdEventTimelineItem> nextItems = List.copyOf(items.subList(0, count));
+        boolean append = currentOnOpen == onOpen && !renderedItems.isEmpty()
+                && nextItems.size() >= renderedItems.size()
+                && nextItems.subList(0, renderedItems.size()).equals(renderedItems);
+        if (append && nextItems.size() == renderedItems.size()) return;
+        int firstNew = append ? renderedItems.size() : 0;
+        if (!append) {
+            for (Component component : content.getComponents()) {
+                if (component instanceof BirdEventCard card) card.cancelPhotoLoading();
+            }
+            content.removeAll();
+            currentDate = null;
+        }
 
         if (items.isEmpty()) {
             content.add(new EmptyStatePanel(
@@ -59,13 +75,8 @@ public class TimelineView extends JPanel {
                     null
             ));
         } else {
-            String currentDate = null;
-            int rendered = 0;
-
-            for (BirdEventTimelineItem item : items) {
-                if (maximumItems > 0 && rendered >= maximumItems) {
-                    break;
-                }
+            for (int index = firstNew; index < nextItems.size(); index++) {
+                BirdEventTimelineItem item = nextItems.get(index);
 
                 if (!item.eventDate().equals(currentDate)) {
                     if (currentDate != null) {
@@ -89,9 +100,11 @@ public class TimelineView extends JPanel {
                 card.setAlignmentX(Component.LEFT_ALIGNMENT);
                 content.add(card);
                 content.add(Box.createVerticalStrut(12));
-                rendered++;
             }
         }
+
+        renderedItems = nextItems;
+        currentOnOpen = onOpen;
 
         content.revalidate();
         content.repaint();

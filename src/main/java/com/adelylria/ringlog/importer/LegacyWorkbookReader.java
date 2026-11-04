@@ -67,6 +67,9 @@ public final class LegacyWorkbookReader {
     private Map<String, String> overflowTexts = Map.of();
     private boolean resolveOverflowReferences;
     private boolean preserveTextWhitespace;
+    private List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.CaptureMethodRow>
+            backupCaptureMethods = List.of();
+    private Map<String, String> backupEventCaptureMethods = Map.of();
 
     LegacyImportData read(Path workbookPath) throws LegacyImportException {
         if (workbookPath == null) {
@@ -89,8 +92,7 @@ public final class LegacyWorkbookReader {
             );
         }
 
-        try (InputStream input = Files.newInputStream(workbookFile);
-             Workbook workbook = WorkbookFactory.create(input)) {
+        try (Workbook workbook = WorkbookFactory.create(workbookFile.toFile(), null, true)) {
             formatter = new DataFormatter(Locale.ROOT, true);
             preserveTextWhitespace = false;
             rejectFormulas(workbook);
@@ -117,6 +119,10 @@ public final class LegacyWorkbookReader {
             List<BirdRow> birds = readBirds(workbook, formatVersion);
             List<PlaceRow> places = readPlaces(workbook, formatVersion);
             List<EventRow> events = readEvents(workbook, formatVersion);
+            backupCaptureMethods = formatVersion == BACKUP_FORMAT_VERSION
+                    ? readCaptureMethods(workbook) : List.of();
+            backupEventCaptureMethods = formatVersion == BACKUP_FORMAT_VERSION
+                    ? readEventCaptureMethods(workbook) : Map.of();
             List<PhotoRow> photos = readPhotos(workbook, formatVersion);
             if (formatVersion == MIGRATOR_FORMAT_VERSION) {
                 validateMigratorAudit(workbook, metadata);
@@ -138,6 +144,9 @@ public final class LegacyWorkbookReader {
             validateCount(metadata, "events_count", events.size());
             validateCount(metadata, "photos_count", photos.size());
             validateCount(metadata, "warnings_count", warnings.size());
+            if (metadata.containsKey("capture_methods_count")) {
+                validateCount(metadata, "capture_methods_count", backupCaptureMethods.size());
+            }
 
             return new LegacyImportData(
                     workbookFile,
@@ -147,7 +156,9 @@ public final class LegacyWorkbookReader {
                     places,
                     events,
                     photos,
-                    warnings
+                    warnings,
+                    backupCaptureMethods,
+                    backupEventCaptureMethods
             );
         } catch (LegacyImportException exception) {
             throw exception;
@@ -203,7 +214,7 @@ public final class LegacyWorkbookReader {
                                 row.observations(), row.clouds(), row.rain(), row.thermalSensation(),
                                 row.wind(), row.captureType(), row.dead(), row.sourceName(),
                                 row.sourceReference(), row.sourceAliases(), row.createdAt(),
-                                row.updatedAt()
+                                row.updatedAt(), backupEventCaptureMethods.get(row.key())
                         )).toList(),
                 data.photos().stream().map(row ->
                         new com.adelylria.ringlog.importexport.compatibility
@@ -216,8 +227,59 @@ public final class LegacyWorkbookReader {
                         new com.adelylria.ringlog.importexport.compatibility
                                 .RingLogV3BackupModel.WarningRow(
                                 row.severity(), row.source(), row.reference(), row.message()
-                        )).toList()
+                        )).toList(),
+                backupCaptureMethods
         );
+    }
+
+    private List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.CaptureMethodRow>
+            readCaptureMethods(Workbook workbook) throws LegacyImportException {
+        Sheet sheet = workbook.getSheet("capture_methods");
+        if (sheet == null) {
+            return List.of();
+        }
+        Map<String, Integer> columns = columns(sheet, "stable_key", "name", "active");
+        var rows = new ArrayList<com.adelylria.ringlog.importexport.compatibility
+                .RingLogV3BackupModel.CaptureMethodRow>();
+        Set<String> keys = new HashSet<>();
+        Set<String> names = new HashSet<>();
+        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+            Row row = sheet.getRow(index);
+            if (isEmpty(row)) continue;
+            String key = requiredNonBlankText(row, columns, "stable_key", sheet, index);
+            java.util.UUID.fromString(key);
+            String name = requiredNonBlankText(row, columns, "name", sheet, index);
+            if (!keys.add(key) || !names.add(name.trim().toUpperCase(Locale.ROOT))) {
+                throw invalid(sheet, index, "Método de captura duplicado.");
+            }
+            rows.add(new com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel
+                    .CaptureMethodRow(key, name,
+                            requiredBoolean(row, columns, "active", sheet, index)));
+        }
+        return List.copyOf(rows);
+    }
+
+    private Map<String, String> readEventCaptureMethods(Workbook workbook)
+            throws LegacyImportException {
+        Sheet sheet = requiredSheet(workbook, "events");
+        Map<String, Integer> columns = columns(sheet, "event_key");
+        if (!columns.containsKey("capture_method_stable_key")) return Map.of();
+        Set<String> methods = backupCaptureMethods.stream()
+                .map(com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel
+                        .CaptureMethodRow::stableKey)
+                .collect(java.util.stream.Collectors.toSet());
+        Map<String, String> result = new HashMap<>();
+        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+            Row row = sheet.getRow(index);
+            if (isEmpty(row)) continue;
+            String method = optionalText(row, columns, "capture_method_stable_key");
+            if (method == null) continue;
+            if (!methods.contains(method)) {
+                throw invalid(sheet, index, "El método de captura referenciado no existe.");
+            }
+            result.put(requiredText(row, columns, "event_key", sheet, index), method);
+        }
+        return Map.copyOf(result);
     }
 
     private Map<String, String> readMetadata(Workbook workbook)

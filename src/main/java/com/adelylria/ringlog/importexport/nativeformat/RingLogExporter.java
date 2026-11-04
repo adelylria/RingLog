@@ -1,6 +1,7 @@
 package com.adelylria.ringlog.importexport.nativeformat;
 
 import java.io.IOException;
+import java.io.BufferedOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -32,7 +33,8 @@ import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import org.apache.commons.compress.archivers.zip.Zip64Mode;
 
 import com.adelylria.ringlog.database.Database;
 import com.adelylria.ringlog.importexport.ImportSource;
@@ -45,6 +47,8 @@ import com.adelylria.ringlog.storage.MediaPathResolver;
 public final class RingLogExporter {
 
     private static final String WORKBOOK_NAME = "ringlog-export.xlsx";
+    private static final int OUTPUT_BUFFER_BYTES = 64 * 1024;
+    private static final int WORKBOOK_ROW_WINDOW = 128;
 
     private final String databaseFile;
     private final MediaPathResolver mediaResolver;
@@ -73,29 +77,18 @@ public final class RingLogExporter {
         try {
             Database.validate(databaseFile);
             String exportId = UUID.randomUUID().toString();
-            ExportDataset dataset = readSnapshot(exportId);
-            boolean zip = !dataset.binaries().isEmpty();
-            Path output = outputPath(destination.toAbsolutePath().normalize(), zip);
-            Files.createDirectories(output.getParent());
-            workbook = Files.createTempFile(output.getParent(), ".ringlog-export-", ".xlsx");
-            writeWorkbook(workbook, dataset);
-
-            Path candidate;
-            if (zip) {
-                packaged = Files.createTempFile(output.getParent(), ".ringlog-export-", ".zip");
-                writeZip(packaged, workbook, dataset.binaries());
-                candidate = packaged;
-            } else {
-                candidate = workbook;
-            }
-            validate(candidate, exportId, dataset.binaries().size());
-            replace(candidate, output);
+            PreparedExport prepared = prepareExport(destination, exportId);
+            workbook = prepared.workbook();
+            packaged = prepared.packaged();
+            Path candidate = packaged == null ? workbook : packaged;
+            validate(candidate, exportId, prepared.binaryCount());
+            replace(candidate, prepared.output());
             if (candidate.equals(workbook)) {
                 workbook = null;
             } else {
                 packaged = null;
             }
-            return new ExportResult(output, exportId, dataset.binaries().size());
+            return new ExportResult(prepared.output(), exportId, prepared.binaryCount());
         } catch (RingLogExportException exception) {
             throw exception;
         } catch (SQLException exception) {
@@ -107,6 +100,35 @@ public final class RingLogExporter {
         } finally {
             deleteQuietly(workbook);
             deleteQuietly(packaged);
+        }
+    }
+
+    private PreparedExport prepareExport(Path destination, String exportId)
+            throws SQLException, IOException, RingLogExportException {
+        Path workbook = null;
+        Path packaged = null;
+        boolean completed = false;
+        try {
+            // End this producer's frame before validation builds a second workbook/model.
+            ExportDataset dataset = readSnapshot(exportId);
+            int binaryCount = dataset.binaries().size();
+            boolean zip = binaryCount != 0;
+            Path output = outputPath(destination.toAbsolutePath().normalize(), zip);
+            Files.createDirectories(output.getParent());
+            workbook = Files.createTempFile(output.getParent(), ".ringlog-export-", ".xlsx");
+            writeWorkbook(workbook, dataset);
+            if (zip) {
+                packaged = Files.createTempFile(output.getParent(), ".ringlog-export-", ".zip");
+                writeZip(packaged, workbook, dataset.binaries());
+            }
+            PreparedExport prepared = new PreparedExport(output, workbook, packaged, binaryCount);
+            completed = true;
+            return prepared;
+        } finally {
+            if (!completed) {
+                deleteQuietly(workbook);
+                deleteQuietly(packaged);
+            }
         }
     }
 
@@ -133,6 +155,10 @@ public final class RingLogExporter {
                                created_at, updated_at
                         FROM place ORDER BY stable_key
                         """));
+                sheets.put("capture_methods", rows(connection, "capture_methods", """
+                        SELECT stable_key, name, active
+                        FROM capture_method ORDER BY stable_key
+                        """));
                 sheets.put("events", rows(connection, "events", """
                         SELECT e.stable_key, e.migration_key,
                                b.stable_key AS bird_stable_key, e.event_type, e.event_date,
@@ -144,10 +170,12 @@ public final class RingLogExporter {
                                e.observations, e.clouds, e.rain, e.thermal_sensation,
                                e.wind, e.capture_type, e.is_dead, e.source_name,
                                e.source_reference, e.review_status, e.review_note,
-                               e.created_at, e.updated_at
+                               e.created_at, e.updated_at,
+                               cm.stable_key AS capture_method_stable_key
                         FROM bird_event e
                         JOIN bird b ON b.id = e.bird_id
                         LEFT JOIN place p ON p.id = e.place_id
+                        LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
                         ORDER BY e.stable_key
                         """));
                 BinaryRows photos = photoRows(connection);
@@ -369,7 +397,11 @@ public final class RingLogExporter {
 
     private static void writeWorkbook(Path destination, ExportDataset dataset)
             throws IOException {
-        try (Workbook workbook = new XSSFWorkbook()) {
+        // Shared strings deduplicate repeated long text so our own ZIP safety checks accept it.
+        // The row window still avoids retaining a cell DOM for the entire archive.
+        // POI 5.5 closes and disposes its temporary sheet XML on every exit path.
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(null, WORKBOOK_ROW_WINDOW, false, true)) {
+            workbook.setZip64Mode(Zip64Mode.AsNeeded);
             CellStyle header = headerStyle(workbook);
             Sheet metadata = workbook.createSheet("metadata");
             Row metadataHeader = metadata.createRow(0);
@@ -431,7 +463,8 @@ public final class RingLogExporter {
             workbook.setSheetVisibility(
                     workbook.getSheetIndex(text), org.apache.poi.ss.usermodel.SheetVisibility.VERY_HIDDEN
             );
-            try (OutputStream output = Files.newOutputStream(destination)) {
+            try (OutputStream output = new BufferedOutputStream(
+                    Files.newOutputStream(destination), OUTPUT_BUFFER_BYTES)) {
                 workbook.write(output);
             }
         }
@@ -450,7 +483,8 @@ public final class RingLogExporter {
 
     private static void writeZip(Path zipFile, Path workbook, List<Binary> binaries)
             throws IOException {
-        try (OutputStream file = Files.newOutputStream(zipFile);
+        try (OutputStream file = new BufferedOutputStream(
+                    Files.newOutputStream(zipFile), OUTPUT_BUFFER_BYTES);
              ZipOutputStream zip = new ZipOutputStream(file)) {
             zip.putNextEntry(new ZipEntry(WORKBOOK_NAME));
             Files.copy(workbook, zip);
@@ -561,6 +595,9 @@ public final class RingLogExporter {
     }
 
     private record Binary(String packagePath, Path source, String sha256, long size) {
+    }
+
+    private record PreparedExport(Path output, Path workbook, Path packaged, int binaryCount) {
     }
 
     private record BinaryRows(List<NativeRow> rows, List<Binary> binaries) {

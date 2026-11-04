@@ -281,6 +281,175 @@ public final class BackupExportServiceTest {
         }
     }
 
+    public static void streamedRowsAndPhotoChunksRestoreWithoutChangingText() throws Exception {
+        Fixture fixture = createFixture(true);
+        java.util.Set<Path> temporaryBefore = streamingTemporaryFiles();
+        byte[] photoBytes = new byte[45_001];
+        for (int index = 0; index < photoBytes.length; index++) photoBytes[index] = (byte) (index * 31);
+        String[] observations = {
+                null, "", "  acento á 🦜\tsegunda\r\nlínea\u0000 _x0000_  ",
+                "@@RINGLOG_TEXT:literal", "x".repeat(29_999) + "🦜" + "y".repeat(2_000),
+                "\u0001\u000b\u000c\u001f\ufffe\uffff _x0041_ _xABCD_ _x005F_",
+                "\u0000".repeat(30_000)
+        };
+        try {
+            Files.write(fixture.root().resolve("photos/events/fixture/original.jpg"), photoBytes);
+            try (Connection connection = Database.getConnection(fixture.sourceDatabase().toString())) {
+                connection.setAutoCommit(false);
+                try (PreparedStatement insert = connection.prepareStatement("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                            event_time, place_id, observations, source_name, source_reference,
+                            created_at, capture_method_id)
+                        VALUES (?, 1, 'CONTROL', '2024-04-05', '09:30', 1, ?, 'Streaming test', ?,
+                                '2024-04-05 09:31:00', 1)
+                        """);
+                     Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("UPDATE capture_method SET name = 'FILATS ARCHIVADO', active = 0 WHERE id = 1");
+                    for (int index = 0; index < 513; index++) {
+                        insert.setString(1, java.util.UUID.nameUUIDFromBytes(
+                                ("backup-stream-" + index).getBytes(StandardCharsets.UTF_8)).toString());
+                        insert.setString(2, index < observations.length ? observations[index] : "Fila " + index);
+                        insert.setString(3, "STREAM:" + index);
+                        insert.addBatch();
+                    }
+                    insert.executeBatch();
+                }
+                connection.commit();
+            }
+            BackupExportResult result = new BackupExportService(fixture.sourceDatabase().toString())
+                    .exportTo(fixture.backup());
+            require(result.eventsCount() == 515, "Streaming must retain rows beyond several row windows");
+            assertSelfContainedVersionThreeWorkbook(fixture.backup());
+            try (InputStream input = Files.newInputStream(fixture.backup());
+                 Workbook workbook = WorkbookFactory.create(input)) {
+                Sheet events = workbook.getSheet("events");
+                require(events.getLastRowNum() == 515 && events.getRow(1) != null && events.getRow(515) != null,
+                        "All flushed rows must remain present in the finished workbook");
+                require(events.getPaneInformation() != null && events.getPaneInformation().isFreezePane(),
+                        "The streamed workbook must retain its frozen header");
+                for (int column = 0; column < events.getRow(0).getLastCellNum(); column++) {
+                    require(events.getColumnWidth(column) >= 2_800 && events.getColumnWidth(column) <= 18_000,
+                            "Readable backup column widths must remain bounded");
+                }
+                Sheet content = workbook.getSheet("photo_content");
+                require(content.getLastRowNum() == 3, "The photo must span three compatible base64 chunks");
+                StringBuilder encoded = new StringBuilder();
+                for (int index = 1; index <= content.getLastRowNum(); index++) {
+                    Row row = content.getRow(index);
+                    require(row.getCell(1).getNumericCellValue() == index - 1
+                                    && row.getCell(2).getNumericCellValue() == 3,
+                            "Photo chunks must retain their zero-based index and total count");
+                    String chunk = row.getCell(3).getStringCellValue();
+                    require(chunk.length() == (index == 3 ? 4 : 30_000),
+                            "Base64 chunk boundaries must remain compatible with existing readers");
+                    encoded.append(chunk);
+                }
+                require(java.util.Arrays.equals(photoBytes, java.util.Base64.getDecoder().decode(encoded.toString())),
+                        "Chunked encoding must preserve every original photo byte");
+            }
+            ImportResult restored = new LegacyImportService(fixture.targetDatabase().toString(),
+                    fixture.targetManagedPhotos()).importWorkbook(fixture.backup());
+            require(restored.eventsCreated() == 515 && restored.photosCreated() == 1,
+                    "The existing public importer must restore the streamed workbook");
+            assertPortableFieldsEqual(fixture.sourceDatabase(), fixture.targetDatabase());
+            String assignments = """
+                    SELECT e.source_reference, cm.stable_key, cm.name, cm.active
+                    FROM bird_event e JOIN capture_method cm ON cm.id = e.capture_method_id
+                    ORDER BY e.source_reference
+                    """;
+            require(queryRows(fixture.sourceDatabase(), assignments).equals(queryRows(fixture.targetDatabase(), assignments)),
+                    "Archived capture methods and every streamed assignment must round-trip unchanged");
+            require(java.util.Arrays.equals(photoBytes, Files.readAllBytes(storedPhotoPath(
+                            fixture.targetDatabase(), fixture.targetManagedPhotos()))),
+                    "The restored managed image must match the multi-chunk original");
+            java.util.Set<Path> remaining = streamingTemporaryFiles();
+            remaining.removeAll(temporaryBefore);
+            require(remaining.isEmpty(), "Successful streaming exports must dispose their temporary sheet files");
+        } finally {
+            fixture.delete();
+        }
+    }
+
+    public static void publicationFailurePreservesDestinationAndCleansTemporaryFiles() throws Exception {
+        Fixture fixture = createFixture(true);
+        java.util.Set<Path> temporaryBefore = streamingTemporaryFiles();
+        try {
+            Path destination = fixture.root().resolve("occupied.xlsx");
+            Files.createDirectory(destination);
+            Path original = destination.resolve("keep.txt");
+            Files.writeString(original, "intacto");
+            requireThrows(() -> new BackupExportService(fixture.sourceDatabase().toString()).exportTo(destination),
+                    "Publishing over a nonempty directory must fail safely");
+            require("intacto".equals(Files.readString(original)), "A publication error must preserve the original destination");
+            try (var files = Files.list(fixture.root())) {
+                require(files.noneMatch(path -> path.getFileName().toString().endsWith(".tmp")),
+                        "A publication error must not leave a partial workbook beside the destination");
+            }
+            java.util.Set<Path> remaining = streamingTemporaryFiles();
+            remaining.removeAll(temporaryBefore);
+            require(remaining.isEmpty(), "A failed export must dispose its temporary sheet files");
+        } finally {
+            fixture.delete();
+        }
+    }
+
+    public static void repeatedLargeTextRemainsReadableWithZipBombProtection() throws Exception {
+        Fixture fixture = createFixture(true);
+        double originalRatio = org.apache.poi.openxml4j.util.ZipSecureFile.getMinInflateRatio();
+        try {
+            try (Connection connection = Database.getConnection(fixture.sourceDatabase().toString())) {
+                connection.setAutoCommit(false);
+                try (PreparedStatement insert = connection.prepareStatement("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                            observations, clouds, source_name, source_reference, created_at)
+                        VALUES (?, 1, 'CONTROL', '2024-04-05', ?, ?, 'Repeated text test', ?,
+                                '2024-04-05 09:31:00')
+                        """)) {
+                    for (int index = 0; index < 513; index++) {
+                        insert.setString(1, java.util.UUID.nameUUIDFromBytes(
+                                ("backup-repeated-" + index).getBytes(StandardCharsets.UTF_8)).toString());
+                        insert.setString(2, "A".repeat(20_000));
+                        insert.setString(3, "\u0000".repeat(20_000));
+                        insert.setString(4, "REPEATED:" + index);
+                        insert.addBatch();
+                    }
+                    insert.executeBatch();
+                }
+                connection.commit();
+            }
+            BackupExportResult result = new BackupExportService(fixture.sourceDatabase().toString())
+                    .exportTo(fixture.backup());
+            require(result.eventsCount() == 515, "Repeated text must retain every event beyond the row window");
+            try (InputStream input = Files.newInputStream(fixture.backup());
+                 Workbook workbook = WorkbookFactory.create(input)) {
+                var strings = ((org.apache.poi.xssf.usermodel.XSSFWorkbook) workbook).getSharedStringSource();
+                require(strings.getCount() > strings.getUniqueCount() + 1_000,
+                        "Repeated large text should use shared strings instead of repeating it in worksheet XML");
+            }
+            ImportResult restored = new LegacyImportService(fixture.targetDatabase().toString(),
+                    fixture.targetManagedPhotos()).importWorkbook(fixture.backup());
+            require(restored.eventsCreated() == 515, "Repeated text must restore through the existing public importer");
+            assertPortableFieldsEqual(fixture.sourceDatabase(), fixture.targetDatabase());
+            require(org.apache.poi.openxml4j.util.ZipSecureFile.getMinInflateRatio() == originalRatio,
+                    "Export and import must keep ZIP bomb protection unchanged");
+        } finally {
+            fixture.delete();
+        }
+    }
+
+    private static java.util.Set<Path> streamingTemporaryFiles() throws Exception {
+        Path directory = Path.of(System.getProperty("java.io.tmpdir")).resolve("poifiles");
+        java.util.Set<Path> result = new java.util.HashSet<>();
+        if (Files.isDirectory(directory)) {
+            try (var files = Files.walk(directory)) {
+                files.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString().startsWith("poi-sxssf-sheet"))
+                        .forEach(result::add);
+            }
+        }
+        return result;
+    }
+
     private static Fixture createFixture(boolean createPhoto) throws Exception {
         Path root = Files.createTempDirectory("ringlog-backup-test-");
         Path sourceDatabase = root.resolve("source.db");
@@ -571,9 +740,34 @@ public final class BackupExportServiceTest {
                 ORDER BY e.event_date, ep.file_name
                 """
         )) {
-            require(queryRows(source, query).equals(queryRows(restored, query)),
-                    "Every portable database field should survive the round trip");
+            var expectedRows = queryRows(source, query);
+            var actualRows = queryRows(restored, query);
+            require(expectedRows.equals(actualRows),
+                    "Every portable database field should survive the round trip: "
+                            + firstDifference(expectedRows, actualRows) + " in " + query.replaceAll("\\s+", " ").trim());
         }
+    }
+
+    private static String firstDifference(java.util.List<java.util.List<String>> expected,
+            java.util.List<java.util.List<String>> actual) {
+        if (expected.size() != actual.size()) return "row counts " + expected.size() + " / " + actual.size();
+        for (int row = 0; row < expected.size(); row++) {
+            for (int column = 0; column < expected.get(row).size(); column++) {
+                String left = expected.get(row).get(column);
+                String right = actual.get(row).get(column);
+                if (!java.util.Objects.equals(left, right)) {
+                    return "row " + row + ", column " + column + ": "
+                            + diagnosticText(left) + " / " + diagnosticText(right);
+                }
+            }
+        }
+        return "no differing cell";
+    }
+
+    private static String diagnosticText(String value) {
+        if (value == null) return "<null>";
+        String escaped = value.replace("\u0000", "\\0").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t");
+        return '"' + escaped.substring(0, Math.min(100, escaped.length())) + '"';
     }
 
     private static java.util.List<java.util.List<String>> queryRows(
@@ -653,6 +847,9 @@ public final class BackupExportServiceTest {
         sameMinuteManualEventsAreNotMerged();
         absurdEmbeddedChunkCountIsRejectedSafely();
         newerManualEventMomentIsPreservedWithoutDuplication();
+        streamedRowsAndPhotoChunksRestoreWithoutChangingText();
+        repeatedLargeTextRemainsReadableWithZipBombProtection();
+        publicationFailurePreservesDestinationAndCleansTemporaryFiles();
         System.out.println("BackupExportServiceTest: PASS");
     }
 }

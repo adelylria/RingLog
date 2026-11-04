@@ -241,6 +241,7 @@ public class CaptureDetailPanel extends JPanel {
         moment.addRow("Lugar", detail.place());
         moment.addRow("Localidad", detail.locality());
         moment.addRow("Ubicación libre", detail.locationText());
+        moment.addRow("Método de captura", detail.captureMethod());
         addSection(moment);
 
         DetailSection bird = new DetailSection("El ave");

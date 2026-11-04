@@ -6,6 +6,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -33,6 +35,8 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingWorker;
+import javax.swing.DefaultComboBoxModel;
+import javax.swing.Timer;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -46,6 +50,7 @@ import com.adelylria.ringlog.report.RecordReportResult;
 import com.adelylria.ringlog.report.RecordReportSelection;
 import com.adelylria.ringlog.report.RecordReportService;
 import com.adelylria.ringlog.ui.components.CalendarDatePicker;
+import com.adelylria.ringlog.ui.components.DatePeriodSelector;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.NavigationIcon;
 import com.adelylria.ringlog.ui.components.TimelineView;
@@ -63,6 +68,9 @@ public class CaptureListPanel extends JPanel {
     private static final String DATE_BY_DAY = "Día";
     private static final String DATE_BY_MONTH = "Mes";
     private static final String DATE_BY_YEAR = "Año";
+    private static final String DATE_RANGE_DAYS = "Rango de días";
+    private static final String DATE_RANGE_MONTHS = "Rango de meses";
+    private static final String DATE_RANGE_YEARS = "Rango de años";
     private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter
             .ofPattern("MMM uuuu", Locale.forLanguageTag("es-ES"));
 
@@ -78,6 +86,14 @@ public class CaptureListPanel extends JPanel {
     private final JComboBox<DateFilterOption> datePeriodCombo;
     private final JComboBox<DateSortOrder> dateSortOrderCombo;
     private final CalendarDatePicker dayPicker;
+    private final CalendarDatePicker endDayPicker;
+    private final DatePeriodSelector rangeStart;
+    private final DatePeriodSelector rangeEnd;
+    private final JPanel rangeStartHolder;
+    private final JPanel rangeEndHolder;
+    private final JPanel endDayHolder;
+    private final JLabel rangeValidation;
+    private final Timer filterDelay;
     private final TimelineView timelineView;
     private final JLabel statusLabel;
     private final JButton showMoreButton;
@@ -86,10 +102,21 @@ public class CaptureListPanel extends JPanel {
     private final JButton exportButton;
     private final boolean canCreateEvent;
     private JButton newEventButton;
-    private List<BirdEventTimelineItem> events = List.of();
     private int visibleLimit = PAGE_SIZE;
     private boolean updatingFilterOptions;
     private boolean exportInProgress;
+    private ArchiveData archiveData = ArchiveData.empty();
+    private List<BirdEventTimelineItem> filterResult = List.of();
+    private ExactRingSearch filterSummary;
+    private FilterSelection lastSelection;
+    private List<BirdEventTimelineItem> renderedItems;
+    private String renderedEmptyMessage;
+    private SwingWorker<FilteredArchive, Void> filterWorker;
+    private int loadGeneration;
+    private int filterGeneration;
+    private boolean loading;
+    private boolean filterPending;
+    private boolean rangesInitialized;
 
     public CaptureListPanel(
             BirdEventRepository eventRepository,
@@ -127,7 +154,10 @@ public class CaptureListPanel extends JPanel {
                 ALL_DATES,
                 DATE_BY_DAY,
                 DATE_BY_MONTH,
-                DATE_BY_YEAR
+                DATE_BY_YEAR,
+                DATE_RANGE_DAYS,
+                DATE_RANGE_MONTHS,
+                DATE_RANGE_YEARS
         });
         this.dateModeCombo.setName("dateFilterMode");
         this.dateModeCombo.getAccessibleContext().setAccessibleName(
@@ -144,6 +174,21 @@ public class CaptureListPanel extends JPanel {
                 "Orden de los registros por fecha"
         );
         this.dayPicker = new CalendarDatePicker(null);
+        this.dayPicker.setName("dateRangeStartDay");
+        this.endDayPicker = new CalendarDatePicker(null);
+        this.endDayPicker.setName("dateRangeEndDay");
+        this.endDayPicker.getAccessibleContext().setAccessibleName("Último día del rango");
+        this.rangeStart = new DatePeriodSelector("dateRangeStart", "Desde");
+        this.rangeEnd = new DatePeriodSelector("dateRangeEnd", "Hasta");
+        this.rangeStartHolder = labeledControl("Desde", rangeStart);
+        this.rangeEndHolder = labeledControl("Hasta", rangeEnd);
+        this.endDayHolder = labeledControl("Hasta", endDayPicker);
+        this.rangeValidation = UiKit.muted("");
+        this.rangeValidation.setName("dateRangeValidation");
+        this.rangeValidation.setVisible(false);
+        this.filterDelay = new Timer(140, event -> applyFilters());
+        this.filterDelay.setRepeats(false);
+        putClientProperty("RingLog.filterPending", false);
         this.typeCombo.addItem("Todos los tipos");
         for (EventType type : EventType.values()) {
             this.typeCombo.addItem(type);
@@ -242,6 +287,12 @@ public class CaptureListPanel extends JPanel {
                 CalendarDatePicker.SELECTED_DATE_PROPERTY,
                 event -> filterChanged()
         );
+        endDayPicker.addPropertyChangeListener(CalendarDatePicker.SELECTED_DATE_PROPERTY,
+                event -> filterChanged());
+        rangeStart.addPropertyChangeListener(DatePeriodSelector.PERIOD_PROPERTY,
+                event -> filterChanged());
+        rangeEnd.addPropertyChangeListener(DatePeriodSelector.PERIOD_PROPERTY,
+                event -> filterChanged());
     }
 
     public void setMutationActionsEnabled(boolean enabled) {
@@ -292,6 +343,9 @@ public class CaptureListPanel extends JPanel {
         datePeriodCombo.setPreferredSize(new java.awt.Dimension(210, 38));
         dayPicker.setPreferredSize(new java.awt.Dimension(210, 38));
         dayPicker.setVisible(false);
+        endDayHolder.setVisible(false);
+        rangeStartHolder.setVisible(false);
+        rangeEndHolder.setVisible(false);
         JPanel dateMode = new JPanel(new BorderLayout(10, 0));
         dateMode.setOpaque(false);
         dateMode.add(UiKit.muted("Fecha"), BorderLayout.WEST);
@@ -299,6 +353,9 @@ public class CaptureListPanel extends JPanel {
         dateControls.add(dateMode);
         dateControls.add(dayPicker);
         dateControls.add(datePeriodCombo);
+        dateControls.add(endDayHolder);
+        dateControls.add(rangeStartHolder);
+        dateControls.add(rangeEndHolder);
         dateControls.add(clearFiltersButton);
         dateControls.add(exportButton);
 
@@ -306,10 +363,19 @@ public class CaptureListPanel extends JPanel {
         filterControls.setOpaque(false);
         filterControls.add(controls, BorderLayout.NORTH);
         filterControls.add(dateControls, BorderLayout.CENTER);
+        filterControls.add(rangeValidation, BorderLayout.SOUTH);
 
         filters.add(searchRow, BorderLayout.NORTH);
         filters.add(filterControls, BorderLayout.CENTER);
         return filters;
+    }
+
+    private static JPanel labeledControl(String label, java.awt.Component control) {
+        JPanel holder = new JPanel(new BorderLayout(8, 0));
+        holder.setOpaque(false);
+        holder.add(UiKit.muted(label), BorderLayout.WEST);
+        holder.add(control, BorderLayout.CENTER);
+        return holder;
     }
 
     private void configureExportMenu() {
@@ -329,6 +395,7 @@ public class CaptureListPanel extends JPanel {
     }
 
     private void requestExport(RecordReportFormat format) {
+        if (filterPending || loading) return;
         List<BirdEventTimelineItem> filtered = filteredEvents();
         if (filtered.isEmpty()) {
             return;
@@ -370,10 +437,19 @@ public class CaptureListPanel extends JPanel {
         }
         String dateMode = (String) dateModeCombo.getSelectedItem();
         if (dateMode != null && !ALL_DATES.equals(dateMode)) {
-            DateFilterOption period = selectedDatePeriod(dateMode);
-            if (period != null) {
-                descriptions.add("Fecha (" + dateMode.toLowerCase(Locale.ROOT)
-                        + "): " + period.label());
+            if (isRangeMode(dateMode)) {
+                FilterSelection selection = selection();
+                if (selection.start() != null && selection.end() != null) {
+                    descriptions.add("Fecha (" + dateMode.toLowerCase(Locale.ROOT) + "): "
+                            + UiKit.date(selection.start().toString()) + " – "
+                            + UiKit.date(selection.end().toString()));
+                }
+            } else {
+                DateFilterOption period = selectedDatePeriod(dateMode);
+                if (period != null) {
+                    descriptions.add("Fecha (" + dateMode.toLowerCase(Locale.ROOT)
+                            + "): " + period.label());
+                }
             }
         }
         if (dateSortOrderCombo.getSelectedItem() == DateSortOrder.OLDEST_FIRST) {
@@ -445,7 +521,7 @@ public class CaptureListPanel extends JPanel {
             protected void done() {
                 exportInProgress = false;
                 exportButton.setText(previousText);
-                exportButton.setEnabled(!filteredEvents().isEmpty());
+                    exportButton.setEnabled(!filterPending && !loading && !filterResult.isEmpty());
                 try {
                     RecordReportResult result = get();
                     JOptionPane.showMessageDialog(
@@ -482,31 +558,42 @@ public class CaptureListPanel extends JPanel {
     }
 
     public void refresh() {
-        statusLabel.setText("Cargando…");
+        int generation = ++loadGeneration;
+        loading = true;
+        invalidateFilter("Cargando…");
         showMoreButton.setVisible(false);
         showAllButton.setVisible(false);
         exportButton.setEnabled(false);
         visibleLimit = PAGE_SIZE;
 
-        new SwingWorker<List<BirdEventTimelineItem>, Void>() {
+        new SwingWorker<ArchiveData, Void>() {
             @Override
-            protected List<BirdEventTimelineItem> doInBackground() {
-                return eventRepository.findTimeline();
+            protected ArchiveData doInBackground() {
+                return buildArchive(eventRepository.findTimeline());
             }
 
             @Override
             protected void done() {
+                if (generation != loadGeneration) return;
                 try {
-                    events = get();
+                    archiveData = get();
+                    lastSelection = null;
+                    loading = false;
                     updateFilterOptions();
                     visibleLimit = hasActiveFilters()
                             ? FILTERED_PAGE_SIZE
                             : PAGE_SIZE;
                     applyFilters();
                 } catch (InterruptedException | ExecutionException exception) {
-                    events = List.of();
+                    if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
+                    loading = false;
+                    archiveData = ArchiveData.empty();
+                    filterResult = List.of();
+                    lastSelection = null;
+                    setFilterPending(false);
                     statusLabel.setText("No se han podido cargar los registros");
-                    timelineView.setItems(events, onOpenEvent, 0);
+                    timelineView.setItems(List.of(), onOpenEvent, 0);
+                    renderedItems = null;
                     exportButton.setEnabled(false);
                 }
             }
@@ -516,35 +603,24 @@ public class CaptureListPanel extends JPanel {
     private void updateFilterOptions() {
         String selectedSpecies = (String) speciesCombo.getSelectedItem();
         String selectedPlace = (String) placeCombo.getSelectedItem();
-        List<String> species = events.stream()
-                .map(BirdEventTimelineItem::species)
-                .filter(value -> value != null && !value.isBlank())
-                .distinct()
-                .sorted(String.CASE_INSENSITIVE_ORDER)
-                .toList();
-        List<String> places = events.stream()
-                .map(BirdEventTimelineItem::place)
-                .filter(value -> value != null && !value.isBlank())
-                .distinct()
-                .sorted(String.CASE_INSENSITIVE_ORDER)
-                .toList();
+        List<String> species = archiveData.species();
+        List<String> places = archiveData.places();
 
         updatingFilterOptions = true;
         try {
-            speciesCombo.removeAllItems();
-            speciesCombo.addItem(ALL_SPECIES);
-            species.forEach(speciesCombo::addItem);
+            speciesCombo.setModel(new DefaultComboBoxModel<>(withAll(ALL_SPECIES, species)));
             if (selectedSpecies != null && species.contains(selectedSpecies)) {
                 speciesCombo.setSelectedItem(selectedSpecies);
             }
 
-            placeCombo.removeAllItems();
-            placeCombo.addItem(ALL_PLACES);
-            places.forEach(placeCombo::addItem);
+            placeCombo.setModel(new DefaultComboBoxModel<>(withAll(ALL_PLACES, places)));
             if (selectedPlace != null && places.contains(selectedPlace)) {
                 placeCombo.setSelectedItem(selectedPlace);
             }
 
+            dayPicker.setAvailableDates(archiveData.days());
+            endDayPicker.setAvailableDates(archiveData.days());
+            if (!rangesInitialized) resetRanges();
             updateDatePeriodOptions();
         } finally {
             updatingFilterOptions = false;
@@ -569,44 +645,62 @@ public class CaptureListPanel extends JPanel {
         String mode = (String) dateModeCombo.getSelectedItem();
         DateFilterOption selected = (DateFilterOption) datePeriodCombo
                 .getSelectedItem();
-        Set<LocalDate> availableDays = availableEventDates();
-        dayPicker.setAvailableDates(availableDays);
-        datePeriodCombo.removeAllItems();
+        boolean dayRange = DATE_RANGE_DAYS.equals(mode);
+        boolean periodRange = DATE_RANGE_MONTHS.equals(mode) || DATE_RANGE_YEARS.equals(mode);
+        rangeStartHolder.setVisible(periodRange);
+        rangeEndHolder.setVisible(periodRange);
+        endDayHolder.setVisible(dayRange);
+        rangeStart.setYearOnly(DATE_RANGE_YEARS.equals(mode));
+        rangeEnd.setYearOnly(DATE_RANGE_YEARS.equals(mode));
 
-        if (DATE_BY_DAY.equals(mode)) {
+        if (DATE_BY_DAY.equals(mode) || dayRange) {
             datePeriodCombo.setVisible(false);
             dayPicker.setVisible(true);
             dayPicker.setEnabled(true);
             if (dayPicker.getSelectedDate() == null) {
-                dayPicker.setSelectedDate(availableDays.stream()
-                        .max(Comparator.naturalOrder())
-                        .orElse(LocalDate.now()));
+                dayPicker.setSelectedDate(dayRange ? firstAvailableDate() : lastAvailableDate());
             }
+            if (dayRange && endDayPicker.getSelectedDate() == null) endDayPicker.setSelectedDate(lastAvailableDate());
             return;
         }
 
         dayPicker.setVisible(false);
-        datePeriodCombo.setVisible(true);
+        datePeriodCombo.setVisible(!periodRange);
+        if (periodRange) return;
         if (mode == null || ALL_DATES.equals(mode)) {
-            datePeriodCombo.addItem(new DateFilterOption("", "Todo el archivo"));
+            datePeriodCombo.setModel(new DefaultComboBoxModel<>(new DateFilterOption[]{
+                    new DateFilterOption("", "Todo el archivo")
+            }));
             datePeriodCombo.setEnabled(false);
             return;
         }
 
-        Map<String, DateFilterOption> options = new TreeMap<>(
-                Comparator.reverseOrder()
-        );
-        for (BirdEventTimelineItem item : events) {
-            DateFilterOption option = dateOption(item.eventDate(), mode);
-            if (option != null) {
-                options.putIfAbsent(option.key(), option);
-            }
-        }
-        options.values().forEach(datePeriodCombo::addItem);
+        List<DateFilterOption> options = DATE_BY_MONTH.equals(mode) ? archiveData.months() : archiveData.years();
+        datePeriodCombo.setModel(new DefaultComboBoxModel<>(options.toArray(DateFilterOption[]::new)));
         datePeriodCombo.setEnabled(!options.isEmpty());
-        if (selected != null && options.containsKey(selected.key())) {
-            datePeriodCombo.setSelectedItem(options.get(selected.key()));
-        }
+        if (selected != null) options.stream().filter(option -> selected.key().equals(option.key()))
+                .findFirst().ifPresent(datePeriodCombo::setSelectedItem);
+    }
+
+    private static String[] withAll(String label, List<String> options) {
+        String[] values = new String[options.size() + 1];
+        values[0] = label;
+        for (int index = 0; index < options.size(); index++) values[index + 1] = options.get(index);
+        return values;
+    }
+
+    private LocalDate firstAvailableDate() {
+        return archiveData.first() == null ? LocalDate.now() : archiveData.first();
+    }
+
+    private LocalDate lastAvailableDate() {
+        return archiveData.last() == null ? LocalDate.now() : archiveData.last();
+    }
+
+    private void resetRanges() {
+        rangeStart.setPeriod(YearMonth.from(firstAvailableDate()));
+        rangeEnd.setPeriod(YearMonth.from(lastAvailableDate()));
+        rangesInitialized = true;
     }
 
     private void filterChanged() {
@@ -614,7 +708,8 @@ public class CaptureListPanel extends JPanel {
             return;
         }
         visibleLimit = hasActiveFilters() ? FILTERED_PAGE_SIZE : PAGE_SIZE;
-        applyFilters();
+        invalidateFilter(loading ? "Cargando…" : "Filtrando…");
+        if (!loading) filterDelay.restart();
     }
 
     private void clearFilters() {
@@ -631,12 +726,31 @@ public class CaptureListPanel extends JPanel {
             dateModeCombo.setSelectedIndex(0);
             dateSortOrderCombo.setSelectedItem(DateSortOrder.NEWEST_FIRST);
             dayPicker.setSelectedDate(null);
+            endDayPicker.setSelectedDate(null);
+            resetRanges();
+            if (loading) rangesInitialized = false;
             updateDatePeriodOptions();
         } finally {
             updatingFilterOptions = false;
         }
         visibleLimit = PAGE_SIZE;
         applyFilters();
+    }
+
+    private void invalidateFilter(String message) {
+        filterDelay.stop();
+        filterGeneration++;
+        if (filterWorker != null) filterWorker.cancel(true);
+        setFilterPending(true);
+        statusLabel.setText(message);
+        exportButton.setEnabled(false);
+        showMoreButton.setVisible(false);
+        showAllButton.setVisible(false);
+    }
+
+    private void setFilterPending(boolean pending) {
+        filterPending = pending;
+        putClientProperty("RingLog.filterPending", pending);
     }
 
     private boolean hasActiveFilters() {
@@ -652,22 +766,78 @@ public class CaptureListPanel extends JPanel {
     }
 
     private void applyFilters() {
-        List<BirdEventTimelineItem> filtered = filteredEvents();
+        if (loading) return;
+        invalidateFilter("Filtrando…");
+        int generation = filterGeneration;
+        FilterSelection selected = selection();
+        rangeValidation.setText(selected.error() == null ? "" : selected.error());
+        rangeValidation.setVisible(selected.error() != null);
+        if (selected.error() != null) {
+            filterResult = List.of();
+            lastSelection = null;
+            renderFiltered(filterResult, selected.error());
+            return;
+        }
+        if (selected.equals(lastSelection)) {
+            renderFiltered(filterResult, null);
+            return;
+        }
+        ArchiveData snapshot = archiveData;
+        filterWorker = new SwingWorker<FilteredArchive, Void>() {
+            @Override protected FilteredArchive doInBackground() {
+                List<BirdEventTimelineItem> matches = filterArchive(snapshot, selected);
+                return new FilteredArchive(matches, exactRingSearch(matches, selected.query()));
+            }
 
-        if (filtered.isEmpty() && hasActiveFilters()) {
+            @Override protected void done() {
+                if (isCancelled() || generation != filterGeneration || loading) return;
+                try {
+                    FilteredArchive result = get();
+                    filterResult = result.items();
+                    filterSummary = result.summary();
+                    lastSelection = selected;
+                    renderFiltered(filterResult, null);
+                } catch (CancellationException ignored) {
+                    // A newer selection owns the result and export controls.
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    filterResult = List.of();
+                    lastSelection = null;
+                    renderFiltered(filterResult, "Se ha interrumpido el filtrado.");
+                } catch (ExecutionException exception) {
+                    filterResult = List.of();
+                    lastSelection = null;
+                    renderFiltered(filterResult, "No se han podido filtrar los registros.");
+                }
+            }
+        };
+        filterWorker.execute();
+    }
+
+    private void renderFiltered(List<BirdEventTimelineItem> filtered, String error) {
+        List<BirdEventTimelineItem> visible = filtered.subList(0, Math.min(filtered.size(), visibleLimit));
+        String emptyMessage = error != null ? error : filtered.isEmpty() && hasActiveFilters()
+                ? "No hay registros con estos filtros" : null;
+        boolean sameCards = visible.equals(renderedItems)
+                && java.util.Objects.equals(emptyMessage, renderedEmptyMessage);
+
+        if (!sameCards && emptyMessage != null) {
             timelineView.setItems(
                     filtered,
                     onOpenEvent,
                     visibleLimit,
-                    "No hay registros con estos filtros",
-                    "Prueba con otra fecha o ajusta los filtros para ampliar la búsqueda."
+                    emptyMessage,
+                    error != null ? "Revisa los límites del rango para continuar."
+                            : "Prueba con otra fecha o ajusta los filtros para ampliar la búsqueda."
             );
-        } else {
+        } else if (!sameCards) {
             timelineView.setItems(filtered, onOpenEvent, visibleLimit);
         }
+        renderedItems = List.copyOf(visible);
+        renderedEmptyMessage = emptyMessage;
         int shown = Math.min(filtered.size(), visibleLimit);
-        ExactRingSearch exactRing = exactRingSearch(filtered);
-        statusLabel.setText(shown == filtered.size() && exactRing != null
+        ExactRingSearch exactRing = error == null ? filterSummary : null;
+        statusLabel.setText(error != null ? "Rango de fechas no válido" : shown == filtered.size() && exactRing != null
                 ? exactRing.description()
                 : shown == filtered.size()
                         ? filtered.size() + " "
@@ -678,6 +848,7 @@ public class CaptureListPanel extends JPanel {
         showMoreButton.setVisible(remaining > 0);
         showAllButton.setVisible(remaining > PAGE_SIZE);
         exportButton.setEnabled(!exportInProgress && !filtered.isEmpty());
+        setFilterPending(false);
         if (remaining > 0) {
             int nextPage = Math.min(PAGE_SIZE, remaining);
             showMoreButton.setText(
@@ -689,55 +860,56 @@ public class CaptureListPanel extends JPanel {
     }
 
     private List<BirdEventTimelineItem> filteredEvents() {
+        return filterResult;
+    }
+
+    private FilterSelection selection() {
         String query = searchField.getText().trim().toLowerCase(Locale.ROOT);
         String species = (String) speciesCombo.getSelectedItem();
         String place = (String) placeCombo.getSelectedItem();
         String dateMode = (String) dateModeCombo.getSelectedItem();
-        DateFilterOption datePeriod = selectedDatePeriod(dateMode);
         Object type = typeCombo.getSelectedItem();
-        if (species == null) {
-            species = ALL_SPECIES;
+        LocalDate start = null;
+        LocalDate end = null;
+        boolean dateActive = dateMode != null && !ALL_DATES.equals(dateMode);
+        if (DATE_RANGE_DAYS.equals(dateMode)) {
+            start = dayPicker.getSelectedDate();
+            end = endDayPicker.getSelectedDate();
+        } else if (DATE_RANGE_MONTHS.equals(dateMode)) {
+            start = rangeStart.getPeriod().atDay(1);
+            end = rangeEnd.getPeriod().atEndOfMonth();
+        } else if (DATE_RANGE_YEARS.equals(dateMode)) {
+            start = LocalDate.of(rangeStart.getPeriod().getYear(), 1, 1);
+            end = LocalDate.of(rangeEnd.getPeriod().getYear(), 12, 31);
+        } else if (dateActive) {
+            DateFilterOption period = selectedDatePeriod(dateMode);
+            if (DATE_BY_DAY.equals(dateMode)) {
+                start = dayPicker.getSelectedDate();
+                end = start;
+            } else if (period != null && DATE_BY_MONTH.equals(dateMode)) {
+                YearMonth month = YearMonth.parse(period.key());
+                start = month.atDay(1);
+                end = month.atEndOfMonth();
+            } else if (period != null && DATE_BY_YEAR.equals(dateMode)) {
+                int year = Integer.parseInt(period.key());
+                start = LocalDate.of(year, 1, 1);
+                end = LocalDate.of(year, 12, 31);
+            }
         }
-        if (place == null) {
-            place = ALL_PLACES;
-        }
-        if (dateMode == null) {
-            dateMode = ALL_DATES;
-        }
-
-        String selectedSpecies = species;
-        String selectedPlace = place;
-        String selectedDateMode = dateMode;
-        List<BirdEventTimelineItem> matches = events.stream()
-                .filter(item -> selectedSpecies.equals(ALL_SPECIES)
-                        || selectedSpecies.equals(item.species()))
-                .filter(item -> selectedPlace.equals(ALL_PLACES)
-                        || selectedPlace.equals(item.place()))
-                .filter(item -> !(type instanceof EventType eventType)
-                        || eventType == item.eventType())
-                .filter(item -> matchesDate(
-                        item.eventDate(),
-                        selectedDateMode,
-                        datePeriod
-                ))
-                .filter(item -> query.isBlank() || contains(item, query))
-                .sorted(dateComparator())
-                .toList();
-        if (query.isBlank() || matches.stream().noneMatch(
-                item -> exactRing(item, query)
-        )) {
-            return matches;
-        }
-
-        List<BirdEventTimelineItem> prioritized = new ArrayList<>(matches.size());
-        matches.stream().filter(item -> exactRing(item, query)).forEach(prioritized::add);
-        matches.stream().filter(item -> !exactRing(item, query)).forEach(prioritized::add);
-        return List.copyOf(prioritized);
+        String error = dateActive && (start == null || end == null)
+                ? "Elige el inicio y el final del rango de fechas."
+                : start != null && end.isBefore(start)
+                        ? "El inicio del rango debe ser anterior o igual al final." : null;
+        return new FilterSelection(query,
+                species == null || ALL_SPECIES.equals(species) ? null : species,
+                place == null || ALL_PLACES.equals(place) ? null : place,
+                type instanceof EventType eventType ? eventType : null,
+                start, end, dateActive,
+                dateSortOrderCombo.getSelectedItem() == DateSortOrder.OLDEST_FIRST, error);
     }
 
-    private Comparator<BirdEventTimelineItem> dateComparator() {
-        DateSortOrder selected = (DateSortOrder) dateSortOrderCombo.getSelectedItem();
-        Comparator<String> direction = selected == DateSortOrder.OLDEST_FIRST
+    private static Comparator<BirdEventTimelineItem> dateComparator(boolean oldestFirst) {
+        Comparator<String> direction = oldestFirst
                 ? Comparator.naturalOrder()
                 : Comparator.reverseOrder();
         Comparator<String> values = Comparator.nullsLast(direction);
@@ -745,7 +917,7 @@ public class CaptureListPanel extends JPanel {
                 .thenComparing(BirdEventTimelineItem::eventTime, values);
     }
 
-    private boolean contains(BirdEventTimelineItem item, String query) {
+    private static String searchableText(BirdEventTimelineItem item) {
         return String.join(
                         " ",
                         UiKit.display(item.ringNumber()),
@@ -757,12 +929,92 @@ public class CaptureListPanel extends JPanel {
                         UiKit.time(item.eventTime()),
                         UiKit.display(item.observations())
                 )
-                .toLowerCase(Locale.ROOT)
-                .contains(query);
+                .toLowerCase(Locale.ROOT);
     }
 
-    private ExactRingSearch exactRingSearch(List<BirdEventTimelineItem> matches) {
-        String query = searchField.getText().trim().toLowerCase(Locale.ROOT);
+    private static List<BirdEventTimelineItem> filterArchive(ArchiveData data, FilterSelection selected) {
+        List<BirdEventTimelineItem> matches = new ArrayList<>();
+        List<BirdEventTimelineItem> exact = new ArrayList<>();
+        for (IndexedEvent entry : selected.oldestFirst() ? data.oldest() : data.newest()) {
+            if (Thread.currentThread().isInterrupted()) return List.of();
+            BirdEventTimelineItem item = entry.item();
+            if (selected.species() != null && !selected.species().equals(item.species())
+                    || selected.place() != null && !selected.place().equals(item.place())
+                    || selected.type() != null && selected.type() != item.eventType()) continue;
+            if (selected.dateActive() && (entry.date() == null
+                    || entry.date().isBefore(selected.start()) || entry.date().isAfter(selected.end()))) continue;
+            if (!selected.query().isBlank() && !entry.searchText().contains(selected.query())) continue;
+            if (!selected.query().isBlank() && exactRing(item, selected.query())) exact.add(item);
+            else matches.add(item);
+        }
+        if (!exact.isEmpty()) {
+            exact.addAll(matches);
+            return List.copyOf(exact);
+        }
+        return List.copyOf(matches);
+    }
+
+    private static ArchiveData buildArchive(List<BirdEventTimelineItem> items) {
+        List<IndexedEvent> entries = new ArrayList<>(items.size());
+        Set<LocalDate> days = new HashSet<>();
+        Map<String, DateFilterOption> months = new TreeMap<>(Comparator.reverseOrder());
+        Map<String, DateFilterOption> years = new TreeMap<>(Comparator.reverseOrder());
+        LocalDate first = null;
+        LocalDate last = null;
+        for (BirdEventTimelineItem item : items) {
+            LocalDate date = null;
+            try {
+                if (item.eventDate() != null) date = LocalDate.parse(item.eventDate());
+                if (date != null && (date.getYear() < 1 || date.getYear() > 9999)) date = null;
+            } catch (DateTimeParseException ignored) {
+                // Malformed imported dates remain searchable without becoming range boundaries.
+            }
+            entries.add(new IndexedEvent(item, date, searchableText(item)));
+            if (date != null) {
+                days.add(date);
+                if (first == null || date.isBefore(first)) first = date;
+                if (last == null || date.isAfter(last)) last = date;
+                String month = date.toString().substring(0, 7);
+                if (!months.containsKey(month)) months.put(month,
+                        new DateFilterOption(month, date.format(MONTH_FORMATTER).replace(".", "")));
+                String year = date.toString().substring(0, 4);
+                years.putIfAbsent(year, new DateFilterOption(year, year));
+            }
+        }
+        List<IndexedEvent> newest = entries.stream()
+                .sorted(Comparator.comparing(IndexedEvent::item, dateComparator(false))).toList();
+        List<IndexedEvent> oldest = entries.stream()
+                .sorted(Comparator.comparing(IndexedEvent::item, dateComparator(true))).toList();
+        List<String> species = items.stream().map(BirdEventTimelineItem::species)
+                .filter(value -> value != null && !value.isBlank()).distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER).toList();
+        List<String> places = items.stream().map(BirdEventTimelineItem::place)
+                .filter(value -> value != null && !value.isBlank()).distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER).toList();
+        return new ArchiveData(newest, oldest, species, places, Set.copyOf(days),
+                List.copyOf(months.values()), List.copyOf(years.values()), first, last);
+    }
+
+    private record IndexedEvent(BirdEventTimelineItem item, LocalDate date, String searchText) { }
+    private record FilteredArchive(List<BirdEventTimelineItem> items, ExactRingSearch summary) { }
+    private record FilterSelection(String query, String species, String place, EventType type,
+                                   LocalDate start, LocalDate end, boolean dateActive,
+                                   boolean oldestFirst, String error) { }
+    private record ArchiveData(List<IndexedEvent> newest, List<IndexedEvent> oldest,
+                               List<String> species, List<String> places, Set<LocalDate> days,
+                               List<DateFilterOption> months, List<DateFilterOption> years,
+                               LocalDate first, LocalDate last) {
+        private static ArchiveData empty() {
+            return new ArchiveData(List.of(), List.of(), List.of(), List.of(), Set.of(),
+                    List.of(), List.of(), null, null);
+        }
+    }
+
+    private static boolean isRangeMode(String mode) {
+        return DATE_RANGE_DAYS.equals(mode) || DATE_RANGE_MONTHS.equals(mode) || DATE_RANGE_YEARS.equals(mode);
+    }
+
+    private static ExactRingSearch exactRingSearch(List<BirdEventTimelineItem> matches, String query) {
         if (query.isBlank()) {
             return null;
         }
@@ -792,21 +1044,6 @@ public class CaptureListPanel extends JPanel {
 
     private static boolean containsText(String value, String query) {
         return value != null && value.toLowerCase(Locale.ROOT).contains(query);
-    }
-
-    private Set<LocalDate> availableEventDates() {
-        Set<LocalDate> dates = new HashSet<>();
-        for (BirdEventTimelineItem item : events) {
-            if (item.eventDate() == null || item.eventDate().isBlank()) {
-                continue;
-            }
-            try {
-                dates.add(LocalDate.parse(item.eventDate()));
-            } catch (DateTimeParseException ignored) {
-                // Imported malformed dates remain searchable as text.
-            }
-        }
-        return dates;
     }
 
     private record ExactRingSearch(
@@ -849,54 +1086,6 @@ public class CaptureListPanel extends JPanel {
                     );
         }
         return (DateFilterOption) datePeriodCombo.getSelectedItem();
-    }
-
-    private static DateFilterOption dateOption(String isoDate, String mode) {
-        if (isoDate == null || isoDate.isBlank()) {
-            return null;
-        }
-
-        try {
-            LocalDate date = LocalDate.parse(isoDate);
-            return switch (mode) {
-                case DATE_BY_DAY -> new DateFilterOption(
-                        date.toString(),
-                        UiKit.date(date.toString())
-                );
-                case DATE_BY_MONTH -> new DateFilterOption(
-                        date.toString().substring(0, 7),
-                        date.format(MONTH_FORMATTER).replace(".", "")
-                );
-                case DATE_BY_YEAR -> new DateFilterOption(
-                        Integer.toString(date.getYear()),
-                        Integer.toString(date.getYear())
-                );
-                default -> null;
-            };
-        } catch (DateTimeParseException ignored) {
-            return null;
-        }
-    }
-
-    private static boolean matchesDate(
-            String eventDate,
-            String mode,
-            DateFilterOption period
-    ) {
-        if (ALL_DATES.equals(mode)) {
-            return true;
-        }
-        if (eventDate == null || period == null) {
-            return false;
-        }
-
-        return switch (mode) {
-            case DATE_BY_DAY -> eventDate.equals(period.key());
-            case DATE_BY_MONTH, DATE_BY_YEAR -> eventDate.startsWith(
-                    period.key() + "-"
-            );
-            default -> true;
-        };
     }
 
     private record DateFilterOption(String key, String label) {

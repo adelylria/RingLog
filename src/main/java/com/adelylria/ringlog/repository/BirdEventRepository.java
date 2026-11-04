@@ -5,6 +5,7 @@ import com.adelylria.ringlog.database.WritableDatabaseAccess;
 import com.adelylria.ringlog.application.DataMutationCoordinator;
 import com.adelylria.ringlog.database.entity.BirdEntity;
 import com.adelylria.ringlog.database.entity.BirdEventEntity;
+import com.adelylria.ringlog.database.entity.CaptureMethodEntity;
 import com.adelylria.ringlog.database.entity.EventPhotoEntity;
 import com.adelylria.ringlog.model.EventType;
 import com.adelylria.ringlog.model.input.BirdEventInput;
@@ -39,7 +40,7 @@ import java.util.Optional;
 
 public class BirdEventRepository {
 
-    private static final String TIMELINE_SELECT = """
+    private static final String TIMELINE_PROJECTION = """
             SELECT
                 e.id,
                 e.bird_id,
@@ -52,11 +53,7 @@ public class BirdEventRepository {
                 e.observations,
                 e.bird_condition,
                 e.review_status,
-                (
-                    SELECT GROUP_CONCAT(DISTINCT history.event_type)
-                    FROM bird_event history
-                    WHERE history.bird_id = e.bird_id
-                ) AS history_event_types,
+                %s AS history_event_types,
                 (
                     SELECT ep.file_path
                     FROM event_photo ep
@@ -70,6 +67,26 @@ public class BirdEventRepository {
             LEFT JOIN place p ON p.id = e.place_id
             """;
 
+    private static final String TIMELINE_SELECT = TIMELINE_PROJECTION.formatted("""
+            (
+                SELECT GROUP_CONCAT(DISTINCT history.event_type)
+                FROM bird_event history
+                WHERE history.bird_id = e.bird_id
+            )
+            """);
+
+    // The full archive reuses each bird's journey instead of aggregating it for every event.
+    // Limited/home and single-bird queries keep their indexed, correlated lookup above.
+    private static final String TIMELINE_ARCHIVE_SELECT = TIMELINE_PROJECTION.formatted(
+            "journey.history_event_types"
+    ) + """
+            LEFT JOIN (
+                SELECT bird_id, GROUP_CONCAT(DISTINCT event_type) AS history_event_types
+                FROM bird_event
+                GROUP BY bird_id
+            ) journey ON journey.bird_id = e.bird_id
+            """;
+
     private static final String TIMELINE_ORDER = """
             ORDER BY e.event_date DESC,
                      e.event_time DESC,
@@ -80,6 +97,8 @@ public class BirdEventRepository {
             SELECT
                 e.id,
                 e.bird_id,
+                b.species_id,
+                e.place_id,
                 b.ring_number,
                 COALESCE(NULLIF(s.common_name, ''), s.scientific_name) AS species,
                 s.code AS species_code,
@@ -92,6 +111,8 @@ public class BirdEventRepository {
                 p.locality,
                 e.location_text,
                 e.capture_type,
+                e.capture_method_id,
+                cm.name AS capture_method,
                 e.sex_code,
                 e.age_euring_code,
                 e.fat_score,
@@ -115,6 +136,8 @@ public class BirdEventRepository {
                 p.longitude,
                 e.observations,
                 e.is_dead,
+                e.review_status,
+                e.review_note,
                 e.source_name,
                 e.source_reference,
                 (SELECT COUNT(*) FROM event_photo ep WHERE ep.event_id = e.id)
@@ -123,6 +146,7 @@ public class BirdEventRepository {
             JOIN bird b ON b.id = e.bird_id
             JOIN species s ON s.id = b.species_id
             LEFT JOIN place p ON p.id = e.place_id
+            LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
             """;
 
     private final DatabaseAccess databaseAccess;
@@ -271,6 +295,8 @@ public class BirdEventRepository {
                     p.locality,
                     e.location_text,
                     e.capture_type,
+                    e.capture_method_id,
+                    cm.name AS capture_method,
                     e.sex_code,
                     e.age_euring_code,
                     e.fat_score,
@@ -300,6 +326,7 @@ public class BirdEventRepository {
                 JOIN bird b ON b.id = e.bird_id
                 JOIN species s ON s.id = b.species_id
                 LEFT JOIN place p ON p.id = e.place_id
+                LEFT JOIN capture_method cm ON cm.id = e.capture_method_id
                 WHERE e.id = ?
                 """;
 
@@ -436,13 +463,24 @@ public class BirdEventRepository {
                 nullableJdbcDouble(result, "longitude"),
                 result.getString("observations"),
                 result.getInt("is_dead") == 1,
-                List.of()
+                result.getString("review_status"),
+                result.getString("review_note"),
+                List.of(),
+                result.getLong("species_id"),
+                nullableJdbcLong(result, "place_id"),
+                nullableJdbcLong(result, "capture_method_id"),
+                result.getString("capture_method")
         );
     }
 
     private static Integer nullableJdbcInteger(ResultSet result, String column)
             throws SQLException {
         int value = result.getInt(column);
+        return result.wasNull() ? null : value;
+    }
+
+    private static Long nullableJdbcLong(ResultSet result, String column) throws SQLException {
+        long value = result.getLong(column);
         return result.wasNull() ? null : value;
     }
 
@@ -501,6 +539,7 @@ public class BirdEventRepository {
                     TransactionManager.callInTransaction(source, () -> {
                         Dao<BirdEntity, Long> birds = birdDao(source);
                         Dao<BirdEventEntity, Long> events = eventDao(source);
+                        requireCaptureMethod(source, input.captureMethodId(), null);
                         long birdId = resolveBirdId(birds, input);
                         BirdEventEntity event = new BirdEventEntity(birdId, input);
                         events.create(event);
@@ -550,6 +589,7 @@ public class BirdEventRepository {
                                     "El registro ya no está disponible."
                             );
                         }
+                        requireCaptureMethod(source, input.captureMethodId(), event.getCaptureMethodId());
                         BirdEntity bird = birds.queryForId(event.getBirdId());
                         if (bird == null) {
                             throw new IllegalArgumentException(
@@ -623,7 +663,9 @@ public class BirdEventRepository {
             Long birdId,
             Integer maximumItems
     ) {
-        String sql = TIMELINE_SELECT
+        String select = birdId == null && maximumItems == null
+                ? TIMELINE_ARCHIVE_SELECT : TIMELINE_SELECT;
+        String sql = select
                 + (birdId == null ? "" : "WHERE e.bird_id = ?\n")
                 + TIMELINE_ORDER
                 + (maximumItems == null ? "" : "LIMIT ?\n");
@@ -778,6 +820,9 @@ public class BirdEventRepository {
         if (input.eventDate() == null || input.eventDate().isBlank()) {
             throw new IllegalArgumentException("Indica la fecha del evento.");
         }
+        if (input.captureMethodId() != null && input.captureMethodId() < 1) {
+            throw new IllegalArgumentException("Selecciona un método de captura válido.");
+        }
         validateMeasurement(input.wing(), "ala");
         validateMeasurement(input.p3(), "P3");
         validateMeasurement(input.torso(), "tarso");
@@ -789,6 +834,16 @@ public class BirdEventRepository {
             throw new IllegalArgumentException(
                     "La medida de " + name + " debe ser un número positivo."
             );
+        }
+    }
+
+    private static void requireCaptureMethod(ConnectionSource source, Long selectedId, Long previousId)
+            throws SQLException {
+        if (selectedId == null) return;
+        Dao<CaptureMethodEntity, Long> methods = DaoManager.createDao(source, CaptureMethodEntity.class);
+        CaptureMethodEntity method = methods.queryForId(selectedId);
+        if (method == null || !method.isActive() && !selectedId.equals(previousId)) {
+            throw new IllegalArgumentException("El método de captura ya no está disponible. Selecciona otro.");
         }
     }
 
@@ -848,7 +903,9 @@ public class BirdEventRepository {
                 getString(result, "review_note"),
                 photoPaths,
                 getLong(result, "species_id"),
-                getIntegerLong(result, "place_id")
+                getIntegerLong(result, "place_id"),
+                getIntegerLong(result, "capture_method_id"),
+                getString(result, "capture_method")
         );
     }
 

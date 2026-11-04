@@ -74,12 +74,13 @@ final class ExcelRecordReportWriter {
             "Nubes",
             "Lluvia",
             "Sensación térmica (°C)",
-            "Viento"
+            "Viento",
+            "Método de captura"
     );
     private static final int[] BASE_COLUMN_WIDTHS = {
             14, 9, 17, 17, 29, 17, 28, 26, 23, 21, 31, 14, 14, 13,
             13, 15, 13, 17, 17, 14, 18, 14, 13, 22, 12, 12, 12, 12,
-            10, 11, 13, 11, 20, 13
+            10, 11, 13, 11, 20, 13, 25
     };
 
     void write(
@@ -391,6 +392,7 @@ final class ExcelRecordReportWriter {
         writeText(row, column++, RecordReportText.coded(record.rain()), alternate, styles);
         writeMaybeNumber(row, column++, record.thermalSensation(), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.wind()), alternate, styles);
+        writeText(row, column++, record.captureMethod(), alternate, styles);
         List<String> observations = observationChunks(record.observations());
         for (int index = 0; index < observationColumns; index++) {
             writeRawText(

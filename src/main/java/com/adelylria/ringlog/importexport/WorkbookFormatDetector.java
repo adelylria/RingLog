@@ -1,7 +1,6 @@
 package com.adelylria.ringlog.importexport;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -35,8 +34,28 @@ public final class WorkbookFormatDetector {
         if (source == null) {
             throw new ImportValidationException("No hay una fuente de importación abierta.");
         }
-        try (InputStream input = java.nio.file.Files.newInputStream(source.workbookPath());
-             Workbook workbook = WorkbookFactory.create(input)) {
+        try (Workbook workbook = WorkbookFactory.create(source.workbookPath().toFile(), null, true)) {
+            return detect(source, workbook);
+        } catch (ImportValidationException exception) {
+            throw exception;
+        } catch (EncryptedDocumentException exception) {
+            throw new ImportValidationException(
+                    "El workbook está cifrado y RingLog no puede analizarlo.", exception
+            );
+        } catch (IOException | RuntimeException exception) {
+            throw new ImportValidationException(
+                    "El workbook está dañado o no es un XLSX compatible.", exception
+            );
+        }
+    }
+
+    /** Validates an already opened workbook from this source; ownership remains with the caller. */
+    public WorkbookProfile detect(ImportSource source, Workbook workbook)
+            throws ImportValidationException {
+        if (source == null || workbook == null) {
+            throw new ImportValidationException("No hay una fuente de importación abierta.");
+        }
+        try {
             Map<String, String> metadata = readMetadata(workbook);
             ImportFormat format = selectFormat(metadata);
             Set<String> sheets = sheetNames(workbook);
@@ -56,11 +75,7 @@ public final class WorkbookFormatDetector {
             return new WorkbookProfile(format, metadata, sheets);
         } catch (ImportValidationException exception) {
             throw exception;
-        } catch (EncryptedDocumentException exception) {
-            throw new ImportValidationException(
-                    "El workbook está cifrado y RingLog no puede analizarlo.", exception
-            );
-        } catch (IOException | RuntimeException exception) {
+        } catch (RuntimeException exception) {
             throw new ImportValidationException(
                     "El workbook está dañado o no es un XLSX compatible.", exception
             );

@@ -2,6 +2,7 @@ package com.adelylria.ringlog.importer;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 record LegacyImportData(
         Path workbook,
@@ -11,7 +12,10 @@ record LegacyImportData(
         List<PlaceRow> places,
         List<EventRow> events,
         List<PhotoRow> photos,
-        List<ImportWarning> warnings
+        List<ImportWarning> warnings,
+        List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.CaptureMethodRow>
+                captureMethods,
+        Map<String, String> eventCaptureMethods
 ) {
 
     LegacyImportData {
@@ -21,6 +25,8 @@ record LegacyImportData(
         events = List.copyOf(events);
         photos = List.copyOf(photos);
         warnings = List.copyOf(warnings);
+        captureMethods = List.copyOf(captureMethods);
+        eventCaptureMethods = Map.copyOf(eventCaptureMethods);
     }
 }
 

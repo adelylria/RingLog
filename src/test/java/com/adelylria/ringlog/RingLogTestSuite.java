@@ -1,6 +1,7 @@
 package com.adelylria.ringlog;
 
 import com.adelylria.ringlog.backup.BackupExportServiceTest;
+import com.adelylria.ringlog.benchmark.BenchmarkHarnessTest;
 import com.adelylria.ringlog.media.EventPhotoServiceTest;
 import com.adelylria.ringlog.media.EventPhotoDeletionTest;
 import com.adelylria.ringlog.ui.EventPhotoRemovalUiTest;
@@ -43,6 +44,7 @@ import com.adelylria.ringlog.importexport.NativeExportRoundTripTest;
 import com.adelylria.ringlog.repository.BirdEventRepositoryTest;
 import com.adelylria.ringlog.repository.CatalogRepositoryTest;
 import com.adelylria.ringlog.report.RecordReportServiceTest;
+import com.adelylria.ringlog.report.PdfRecordReportWriterTest;
 import com.adelylria.ringlog.storage.AppPathsTest;
 import com.adelylria.ringlog.storage.ApplicationStorageBootstrapTest;
 import com.adelylria.ringlog.storage.LegacyDataLocationMigratorTest;
@@ -52,6 +54,9 @@ import com.adelylria.ringlog.ui.BirdEventUiTest;
 import com.adelylria.ringlog.ui.ApplicationIconTest;
 import com.adelylria.ringlog.ui.CalendarDatePickerTest;
 import com.adelylria.ringlog.ui.CapturePanelTest;
+import com.adelylria.ringlog.ui.CaptureMethodUiTest;
+import com.adelylria.ringlog.ui.DateRangeFilterTest;
+import com.adelylria.ringlog.ui.TimelinePhotoLoadingTest;
 import com.adelylria.ringlog.ui.EventPhotoGalleryTest;
 import com.adelylria.ringlog.ui.EventPhotoViewerTest;
 import com.adelylria.ringlog.ui.EventPhotoEditingTest;
@@ -87,6 +92,7 @@ public final class RingLogTestSuite {
     public static void main(String[] args) throws Exception {
         for (Class<?> test : List.of(
                 DistributionConfigurationTest.class,
+                BenchmarkHarnessTest.class,
                 ReleaseVersionToolTest.class,
                 ReleaseToolingTest.class,
                 SemanticVersionTest.class,
@@ -128,6 +134,7 @@ public final class RingLogTestSuite {
                 LegacyImportServiceTest.class,
                 BackupExportServiceTest.class,
                 RecordReportServiceTest.class,
+                PdfRecordReportWriterTest.class,
                 BirdEventRepositoryTest.class,
                 CatalogRepositoryTest.class,
                 PortableReadOnlyTest.class,
@@ -138,6 +145,9 @@ public final class RingLogTestSuite {
                 BirdEventUiTest.class,
                 CatalogFormTest.class,
                 CapturePanelTest.class,
+                CaptureMethodUiTest.class,
+                DateRangeFilterTest.class,
+                TimelinePhotoLoadingTest.class,
                 EventPhotoGalleryTest.class,
                 EventPhotoViewerTest.class,
                 EventPhotoEditingTest.class,

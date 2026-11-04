@@ -15,6 +15,7 @@ import java.util.zip.ZipOutputStream;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 /** Contract tests for metadata-only profile detection and safe source opening. */
@@ -109,6 +110,37 @@ public final class WorkbookFormatDetectorTest {
                     metadata("RingLog Export", "1", null, null),
                     ImportFormat.RINGLOG_EXPORT_V1.requiredSheets(), false, true);
             requireValidationFailure(() -> detector.detect(formulaMetadata), "fórmula");
+        } finally {
+            deleteDirectory(directory);
+        }
+    }
+
+    public static void validatesTheCallerOwnedWorkbookWithoutSkippingMetadataChecks() throws Exception {
+        Path directory = Files.createTempDirectory("ringlog-format-reuse-");
+        try {
+            Path file = writeProfile(directory.resolve("source.xlsx"),
+                    metadata("RingLog Export", "1", "export_id",
+                            "6e97265f-97bc-43e5-a365-4161ff50ef01"),
+                    ImportFormat.RINGLOG_EXPORT_V1.requiredSheets(), false, false);
+            WorkbookFormatDetector detector = new WorkbookFormatDetector();
+            WorkbookProfile expected = detector.detect(file);
+            try (ImportSource source = ImportSource.open(file);
+                 var input = Files.newInputStream(source.workbookPath());
+                 Workbook workbook = WorkbookFactory.create(input)) {
+                require(expected.equals(detector.detect(source, workbook)),
+                        "Reusing the opened workbook must retain the exact metadata and sheet checks");
+                var value = workbook.getSheet("metadata").getRow(1).getCell(1);
+                String original = value.getStringCellValue();
+                value.setCellFormula("\"RingLog Export\"");
+                requireValidationFailure(() -> detector.detect(source, workbook), "fórmula");
+                value.setBlank();
+                value.setCellValue(original);
+                workbook.removeSheetAt(workbook.getSheetIndex("events"));
+                requireValidationFailure(() -> detector.detect(source, workbook), "events");
+                workbook.createSheet("events");
+                require(expected.equals(detector.detect(source, workbook)),
+                        "Detection must neither close the caller's workbook nor cache a stale profile");
+            }
         } finally {
             deleteDirectory(directory);
         }
@@ -339,6 +371,7 @@ public final class WorkbookFormatDetectorTest {
     public static void main(String[] args) throws Exception {
         detectsOnlyTheThreeApprovedProfiles();
         rejectsUnknownIncompleteAndHybridMetadata();
+        validatesTheCallerOwnedWorkbookWithoutSkippingMetadataChecks();
         opensNativeZipResolvesMediaAndCleansTemporaryFiles();
         rejectsUnsafeOrUnboundedArchives();
         System.out.println("WorkbookFormatDetectorTest: PASS");

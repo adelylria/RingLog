@@ -28,6 +28,7 @@ import com.adelylria.ringlog.ui.importexport.ConflictsPanel;
 import com.adelylria.ringlog.ui.panels.CaptureDetailPanel;
 import com.adelylria.ringlog.ui.panels.CaptureListPanel;
 import com.adelylria.ringlog.ui.panels.CapturePanel;
+import com.adelylria.ringlog.ui.panels.CaptureMethodsPanel;
 import com.adelylria.ringlog.ui.panels.HomePanel;
 import com.adelylria.ringlog.ui.panels.PlacePanel;
 import com.adelylria.ringlog.ui.panels.ReportsPanel;
@@ -46,6 +47,7 @@ public class MainFrame extends JFrame {
     public static final String CAPTURE_DETAIL = "CAPTURE_DETAIL";
     public static final String SPECIES = "SPECIES";
     public static final String PLACES = "PLACES";
+    public static final String CAPTURE_METHODS = "CAPTURE_METHODS";
     public static final String REPORTS = "REPORTS";
     public static final String CONFLICTS = "CONFLICTS";
     public static final String SETTINGS = "SETTINGS";
@@ -66,6 +68,7 @@ public class MainFrame extends JFrame {
     private final CapturePanel capturePanel;
     private final SpeciesPanel speciesPanel;
     private final PlacePanel placePanel;
+    private final CaptureMethodsPanel captureMethodsPanel;
     private final ReportsPanel reportsPanel;
     private final ConflictsPanel conflictsPanel;
     private final SettingsPanel settingsPanel;
@@ -84,6 +87,7 @@ public class MainFrame extends JFrame {
         if (NEW_CAPTURE.equals(currentScreen) && capturePanel != null) return capturePanel.confirmLeave();
         if (PLACES.equals(currentScreen)) return placePanel.confirmLeave();
         if (SPECIES.equals(currentScreen)) return speciesPanel.confirmLeave();
+        if (CAPTURE_METHODS.equals(currentScreen)) return captureMethodsPanel.confirmLeave();
         return true;
     }
 
@@ -152,6 +156,10 @@ public class MainFrame extends JFrame {
         );
         placePanel = new PlacePanel(
                 catalogRepository, context.capabilities().manageCatalogs()
+        );
+        captureMethodsPanel = new CaptureMethodsPanel(
+                catalogRepository, context.capabilities().manageCatalogs(),
+                () -> { if (capturePanel != null) capturePanel.refreshCaptureMethods(); }
         );
         reportsPanel = new ReportsPanel(eventRepository, catalogRepository);
 
@@ -232,6 +240,7 @@ public class MainFrame extends JFrame {
         }
         contentPanel.add(speciesPanel, SPECIES);
         contentPanel.add(placePanel, PLACES);
+        contentPanel.add(captureMethodsPanel, CAPTURE_METHODS);
         contentPanel.add(reportsPanel, REPORTS);
         contentPanel.add(conflictsPanel, CONFLICTS);
         contentPanel.add(settingsPanel, SETTINGS);
@@ -306,6 +315,7 @@ public class MainFrame extends JFrame {
             case NEW_CAPTURE -> capturePanel.prepareNew();
             case SPECIES -> speciesPanel.refresh();
             case PLACES -> placePanel.refresh();
+            case CAPTURE_METHODS -> captureMethodsPanel.refresh();
             case REPORTS -> reportsPanel.refresh();
             case CONFLICTS -> conflictsPanel.refresh();
             case PORTABLE_COPY -> portableCopyPanel.prepare();
@@ -338,6 +348,7 @@ public class MainFrame extends JFrame {
         }
         speciesPanel.refresh();
         placePanel.refresh();
+        captureMethodsPanel.refresh();
         reportsPanel.refresh();
         conflictsPanel.refresh();
     }
@@ -390,6 +401,7 @@ public class MainFrame extends JFrame {
         captureDetailPanel.setMutationActionsEnabled(enabled);
         speciesPanel.setMutationActionsEnabled(enabled);
         placePanel.setMutationActionsEnabled(enabled);
+        captureMethodsPanel.setMutationActionsEnabled(enabled);
         conflictsPanel.setMutationActionsEnabled(enabled);
         settingsPanel.setMutationActionsEnabled(enabled);
         if (capturePanel != null) {

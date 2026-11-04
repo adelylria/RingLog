@@ -35,6 +35,44 @@ public final class RecordReportServiceTest {
     private RecordReportServiceTest() {
     }
 
+    public static void captureMethodAppearsInExcelAndPdf() throws Exception {
+        Path directory = Files.createTempDirectory("ringlog-report-capture-method-");
+        try {
+            BirdEventDetail source = details().get(0);
+            BirdEventDetail detail = new BirdEventDetail(
+                    source.id(), source.birdId(), source.ringNumber(), source.species(),
+                    source.eventType(), source.eventDate(), source.eventTime(), source.place(),
+                    source.locality(), source.locationText(), source.captureType(), source.sexCode(),
+                    source.ageEuringCode(), source.fatScore(), source.muscleScore(),
+                    source.ringerInitials(), source.status(), source.reproductiveStatus(),
+                    source.moultIntensity(), source.moultExtension(), source.birdCondition(),
+                    source.returnStatus(), source.wing(), source.p3(), source.torso(), source.weight(),
+                    source.clouds(), source.rain(), source.thermalSensation(), source.wind(),
+                    source.latitude(), source.longitude(), source.observations(), source.dead(),
+                    source.reviewStatus(), source.reviewNote(), source.photoPaths(),
+                    source.speciesId(), source.placeId(), 25L, "RED DE PRUEBA"
+            );
+            List<BirdEventReportRow> rows = List.of(BirdEventReportRow.fromDetail(detail));
+            RecordReportService service = new RecordReportService(FIXED_CLOCK);
+            Path excel = service.export(RecordReportFormat.EXCEL, directory.resolve("methods"),
+                    rows, List.of()).path();
+            try (Workbook workbook = WorkbookFactory.create(excel.toFile())) {
+                Sheet records = workbook.getSheet("Registros");
+                int column = headerColumns(records.getRow(3)).get("Método de captura");
+                require("RED DE PRUEBA".equals(records.getRow(4).getCell(column).getStringCellValue()),
+                        "Excel must export the chosen capture method, independently of historical classification");
+            }
+            Path pdf = service.export(RecordReportFormat.PDF, directory.resolve("methods"),
+                    rows, List.of()).path();
+            try (PDDocument document = Loader.loadPDF(pdf.toFile())) {
+                require(pageText(document, 2).contains("RED DE PRUEBA"),
+                        "PDF must include the chosen capture method");
+            }
+        } finally {
+            deleteTree(directory);
+        }
+    }
+
     public static void deadConditionHasAReadableLabelInReports() {
         require("Muerto".equals(RecordReportText.friendly("DEAD")),
                 "PDF reports must show the new condition as Muerto");
@@ -680,6 +718,7 @@ public final class RecordReportServiceTest {
     }
 
     public static void main(String[] args) throws Exception {
+        captureMethodAppearsInExcelAndPdf();
         deadConditionHasAReadableLabelInReports();
         excelContainsTheCompleteFilteredDataset();
         pdfStartsEachRecordOnItsOwnPage();

@@ -7,8 +7,9 @@ consultar el archivo como un diario, no como una tabla.
 ## Funciones principales
 
 - Creación, consulta y edición de registros de anillamiento, control y recuperación.
-- Catálogos reutilizables de aves, especies y lugares.
-- Filtros por texto, tipo, especie, lugar y fecha.
+- Catálogos reutilizables de aves, especies, lugares y métodos de captura.
+- Catálogo de métodos de captura para añadir, renombrar, archivar y reactivar desde su propia sección.
+- Filtros por texto, tipo, especie, lugar y fecha, con rangos inclusivos de días, meses y años.
 - Informes de los registros filtrados en XLSX y PDF.
 - Importación del formato normalizado RingLog Legacy Migrator v5/v5.2.
 - Backups y exportaciones nativas restaurables, incluyendo fotografías mediante ZIP.
@@ -55,6 +56,20 @@ mvn clean test
 
 Si existe un proyecto hermano `RingLogLegacyMigrator`, los tests también buscan por defecto
 `../RingLogLegacyMigrator/output/ringlog-import.xlsx`.
+
+## Medir rendimiento
+
+La [suite de benchmarks](docs/benchmarks.md) mide consultas, escrituras, pantallas, filtros,
+fotos, informes y restauraciones con datos sintéticos y genera JSON, CSV y un informe legible.
+Incluye un paquete para ejecutar las pruebas en el portátil con el Java de RingLog, sin Maven.
+Los [resultados del 4 de noviembre de 2026](docs/performance-results-2026-11-04.md) recogen
+las mediciones de 1.000 a 50.000 registros y la mejora SQL comprobada.
+La [optimización de exportaciones y PDF](docs/export-pdf-performance-2026-11-04.md)
+documenta las mejoras posteriores y sus comprobaciones de integridad y equivalencia visual.
+
+```powershell
+.\scripts\RunBenchmarks.ps1 -Rows 1000,10000 -CreatePortableKit
+```
 
 ## Instaladores de Windows
 

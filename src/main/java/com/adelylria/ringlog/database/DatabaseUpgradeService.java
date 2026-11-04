@@ -33,7 +33,8 @@ public final class DatabaseUpgradeService {
                 new SchemaMigrationRegistry(List.of(
                         new V2ToV3SchemaMigration(),
                         new V3ToV4StorageMigration(),
-                        new V4ToV5PlaceRegionMigration()
+                        new V4ToV5PlaceRegionMigration(),
+                        new V5ToV6CaptureMethodMigration()
                 )),
                 new SchemaBackupService(),
                 new DatabaseIntegrityValidator(),

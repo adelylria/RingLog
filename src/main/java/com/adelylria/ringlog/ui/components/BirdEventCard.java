@@ -6,29 +6,45 @@ import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.Image;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Insets;
+import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
+import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 import com.adelylria.ringlog.model.EventType;
+import com.adelylria.ringlog.media.PhotoImages;
 import com.adelylria.ringlog.model.view.BirdEventTimelineItem;
 import com.adelylria.ringlog.ui.theme.SurfacePanel;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
 public class BirdEventCard extends SurfacePanel {
+
+    private PhotoThumbnail thumbnail;
 
     public BirdEventCard(
             BirdEventTimelineItem item,
@@ -118,28 +134,136 @@ public class BirdEventCard extends SurfacePanel {
     }
 
     private void addPhoto(String photoPath) {
-        if (photoPath == null || !Files.isRegularFile(Path.of(photoPath))) {
-            return;
+        if (photoPath == null || photoPath.isBlank()) return;
+        thumbnail = new PhotoThumbnail(photoPath);
+        thumbnail.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 2));
+        add(thumbnail, BorderLayout.WEST);
+    }
+
+    void cancelPhotoLoading() {
+        if (thumbnail != null) thumbnail.cancelLoading();
+    }
+
+    @Override
+    public void removeNotify() {
+        cancelPhotoLoading();
+        super.removeNotify();
+    }
+
+    /** Only painted cards request an image; off-screen rows do not queue file reads. */
+    private static final class PhotoThumbnail extends JLabel {
+        private static final int SIZE = 92;
+        private static final int CACHE_SIZE = 128;
+        private static final Map<PhotoKey, BufferedImage> CACHE = new LinkedHashMap<>(
+                CACHE_SIZE, 0.75f, true);
+        private static final ThreadPoolExecutor LOADER = new ThreadPoolExecutor(
+                2, 2, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(48), task -> {
+                    Thread thread = new Thread(task, "ringlog-timeline-photo");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+
+        private final String file;
+        private FutureTask<Void> task;
+        private long generation;
+        private boolean finished;
+
+        private PhotoThumbnail(String file) {
+            this.file = file;
+            setName("eventCardPhoto");
+            setPreferredSize(new Dimension(SIZE, SIZE));
+            getAccessibleContext().setAccessibleName("Fotografía del registro");
+            putClientProperty("photoState", "idle");
         }
-        try {
-            var source = ImageIO.read(Path.of(photoPath).toFile());
-            if (source == null) {
-                return;
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            if (!finished && task == null) load();
+            super.paintComponent(graphics);
+        }
+
+        private void load() {
+            long request = ++generation;
+            putClientProperty("photoState", "loading");
+            task = new FutureTask<>(() -> {
+                BufferedImage image = null;
+                try {
+                    image = readThumbnail(file);
+                } catch (IOException | RuntimeException ignored) {
+                    // A missing or damaged image must not prevent reading the event.
+                }
+                if (Thread.currentThread().isInterrupted()) return null;
+                BufferedImage loaded = image;
+                SwingUtilities.invokeLater(() -> {
+                    if (request != generation) return;
+                    task = null;
+                    finished = true;
+                    putClientProperty("photoState", loaded == null ? "missing" : "loaded");
+                    if (loaded == null) {
+                        java.awt.Container parent = getParent();
+                        if (parent != null) {
+                            parent.remove(this);
+                            parent.revalidate();
+                            parent.repaint();
+                        }
+                    } else {
+                        setIcon(new ImageIcon(loaded));
+                        setPreferredSize(new Dimension(loaded.getWidth() + 2, loaded.getHeight()));
+                        revalidate();
+                        repaint();
+                    }
+                });
+                return null;
+            });
+            try {
+                LOADER.execute(task);
+            } catch (RejectedExecutionException busy) {
+                task = null;
+                Timer retry = new Timer(150, event -> repaint());
+                retry.setRepeats(false);
+                retry.start();
             }
-            int maximum = 92;
-            double ratio = Math.min(
-                    (double) maximum / source.getWidth(),
-                    (double) maximum / source.getHeight()
-            );
+        }
+
+        private void cancelLoading() {
+            generation++;
+            if (task != null) {
+                task.cancel(true);
+                LOADER.remove(task);
+                task = null;
+            }
+        }
+
+        private static BufferedImage readThumbnail(String file) throws IOException {
+            Path path = Path.of(file).toAbsolutePath().normalize();
+            BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
+            if (!attributes.isRegularFile()) throw new IOException("No es una fotografía.");
+            PhotoKey key = new PhotoKey(path, attributes.lastModifiedTime(), attributes.size());
+            synchronized (CACHE) {
+                BufferedImage cached = CACHE.get(key);
+                if (cached != null) return cached;
+            }
+            if (Thread.currentThread().isInterrupted()) throw new IOException("Carga cancelada.");
+            BufferedImage source = PhotoImages.load(path, SIZE * 2, SIZE * 2).image();
+            double ratio = Math.min((double) SIZE / source.getWidth(), (double) SIZE / source.getHeight());
             int width = Math.max(1, (int) Math.round(source.getWidth() * ratio));
             int height = Math.max(1, (int) Math.round(source.getHeight() * ratio));
-            Image scaled = source.getScaledInstance(width, height, Image.SCALE_SMOOTH);
-            JLabel photo = new JLabel(new ImageIcon(scaled));
-            photo.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 2));
-            add(photo, BorderLayout.WEST);
-        } catch (IOException ignored) {
-            // The event remains readable when a referenced image is unavailable.
+            BufferedImage scaled = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = scaled.createGraphics();
+            try {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                graphics.drawImage(source, 0, 0, width, height, null);
+            } finally {
+                graphics.dispose();
+            }
+            if (!Thread.currentThread().isInterrupted()) synchronized (CACHE) {
+                CACHE.put(key, scaled);
+                while (CACHE.size() > CACHE_SIZE) CACHE.remove(CACHE.keySet().iterator().next());
+            }
+            return scaled;
         }
+
+        private record PhotoKey(Path file, FileTime modified, long size) { }
     }
 
     private static String summarize(String observations) {
