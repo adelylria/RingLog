@@ -140,6 +140,16 @@ public final class ImportFingerprintService {
                     value.stableKey(), value.captureMethodStableKey()
             ));
         }
+        if (model.events().stream().anyMatch(event -> event.temperatureCelsius() != null)) {
+            addCollection(digest, "event_temperatures", model.events(), value -> row(
+                    value.stableKey(), value.temperatureCelsius()
+            ));
+        }
+        if (!model.environmentOptions().isEmpty()) {
+            addCollection(digest, "environment_options", model.environmentOptions(), value -> row(
+                    value.stableKey(), value.category(), value.name(), value.active(), value.sortOrder()
+            ));
+        }
         return HexFormat.of().formatHex(digest.digest());
     }
 
@@ -155,10 +165,12 @@ public final class ImportFingerprintService {
                 entry -> row(entry.getKey(), entry.getValue()));
         for (Map.Entry<String, List<NativeExportModel.NativeRow>> sheet
                 : model.sheets().entrySet().stream()
+                .filter(entry -> !"environment_options".equals(entry.getKey()) || !entry.getValue().isEmpty())
                 .sorted(Map.Entry.comparingByKey()).toList()) {
             addCollection(digest, sheet.getKey(), sheet.getValue(), nativeRow -> {
                 List<Object> values = new ArrayList<>();
                 for (Map.Entry<String, String> value : nativeRow.values().entrySet().stream()
+                        .filter(value -> !"temperature_celsius".equals(value.getKey()) || value.getValue() != null)
                         .sorted(Map.Entry.comparingByKey()).toList()) {
                     values.add(value.getKey());
                     values.add(value.getValue());

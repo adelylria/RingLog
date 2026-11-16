@@ -69,8 +69,8 @@ public final class LayoutDesignTest {
                 .filter(button -> button.getText() != null && !button.getText().isBlank())
                 .toList();
 
-        require(buttons.size() == 9,
-                "Sidebar should expose all nine navigation actions, including capture methods");
+        require(buttons.size() == 10 && buttons.stream().anyMatch(button -> "Entorno".equals(button.getText())),
+                "Sidebar should expose all ten navigation actions, including the environment catalog");
         require(buttons.stream().allMatch(button -> button.getIcon() != null),
                 "Navigation icons should be painted icons, not missing font glyphs");
     }

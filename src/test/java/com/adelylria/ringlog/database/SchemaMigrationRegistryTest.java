@@ -37,15 +37,21 @@ public final class SchemaMigrationRegistryTest {
                 6,
                 SchemaMigrationExecutionType.SQL_TRANSACTIONAL
         );
+        SchemaMigration v6ToV7 = new TestMigration(
+                6,
+                7,
+                SchemaMigrationExecutionType.SQL_TRANSACTIONAL
+        );
+        SchemaMigration v7ToV8 = new TestMigration(7, 8, SchemaMigrationExecutionType.SQL_TRANSACTIONAL);
         SchemaMigrationRegistry registry = new SchemaMigrationRegistry(
-                List.of(v5ToV6, v4ToV5)
+                List.of(v7ToV8, v6ToV7, v5ToV6, v4ToV5)
         );
 
-        SchemaUpgradePlan plan = registry.plan(4, 6);
+        SchemaUpgradePlan plan = registry.plan(4, 8);
 
         require(plan.fromSchema() == 4, "The plan must retain its source schema");
-        require(plan.targetSchema() == 6, "The plan must retain its target schema");
-        require(plan.steps().equals(List.of(v4ToV5, v5ToV6)),
+        require(plan.targetSchema() == 8, "The plan must retain its target schema");
+        require(plan.steps().equals(List.of(v4ToV5, v5ToV6, v6ToV7, v7ToV8)),
                 "The registry must order every contiguous step by source schema");
     }
 
@@ -84,6 +90,12 @@ public final class SchemaMigrationRegistryTest {
         require(new V5ToV6CaptureMethodMigration().executionType()
                         == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
                 "The real v5 -> v6 migration must be SQL transactional");
+        require(new V6ToV7TemperatureMigration().executionType()
+                        == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
+                "The real v6 -> v7 migration must be SQL transactional");
+        require(new V7ToV8EnvironmentMigration().executionType()
+                        == SchemaMigrationExecutionType.SQL_TRANSACTIONAL,
+                "The real v7 -> v8 migration must be SQL transactional");
     }
 
     private static void requireFailure(ThrowingRunnable action, String message) {

@@ -5,9 +5,12 @@ import java.awt.Container;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.swing.JButton;
@@ -30,7 +33,9 @@ import com.adelylria.ringlog.repository.BirdEventRepository;
 import com.adelylria.ringlog.repository.CatalogRepository;
 import com.adelylria.ringlog.ui.components.DateSelector;
 import com.adelylria.ringlog.ui.components.TimeSelector;
+import com.adelylria.ringlog.ui.components.EnvironmentSelector;
 import com.adelylria.ringlog.ui.panels.CapturePanel;
+import com.adelylria.ringlog.ui.panels.CaptureDetailPanel;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
 public final class CapturePanelTest {
@@ -356,6 +361,207 @@ public final class CapturePanelTest {
         });
     }
 
+    public static void ambientTemperatureLoadsSavesAndClearsIndependentlyOfThermalSensation()
+            throws Exception {
+        CatalogRepository catalog = new CatalogRepository("unused.db") {
+            @Override public List<SpeciesOption> findSpeciesOptions() { return List.of(); }
+            @Override public List<PlaceSummary> findPlaceSummaries() { return List.of(); }
+            @Override public List<com.adelylria.ringlog.model.view.CaptureMethodOption> findCaptureMethods() {
+                return List.of();
+            }
+        };
+        AtomicReference<BirdEventInput> savedInput = new AtomicReference<>();
+        AtomicInteger saveCallbacks = new AtomicInteger();
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override public void update(long eventId, BirdEventInput input) {
+                require(eventId == 31L, "Temperature edits must update the original event");
+                savedInput.set(input);
+            }
+            @Override public long insert(BirdEventInput input) {
+                throw new AssertionError("Editing the weather must not create a second event");
+            }
+        };
+        CapturePanel[] holder = new CapturePanel[1];
+        SwingUtilities.invokeAndWait(() -> holder[0] = new CapturePanel(
+                repository, catalog, ignored -> saveCallbacks.incrementAndGet(), () -> { }
+        ));
+        CapturePanel panel = holder[0];
+        for (Integer temperature : new Integer[] {-99, 0, null, 99}) {
+            BirdEventDetail detail = detailWithWeather(temperature, "17,5");
+            SwingUtilities.invokeAndWait(() -> panel.edit(detail));
+            waitFor(() -> findNamed(panel, "speciesField", JComboBox.class).getSelectedItem()
+                            instanceof SpeciesOption option && option.id() == detail.speciesId()
+                            && !panel.hasUnsavedChanges(),
+                    "Loading weather and its catalogs must not create unsaved changes");
+            int callbacksBeforeSave = saveCallbacks.get();
+            Integer expectedTemperature = Integer.valueOf(-99).equals(temperature)
+                    ? Integer.valueOf(-12) : temperature;
+            SwingUtilities.invokeAndWait(() -> {
+                JTextField ambient = findNamed(panel, "temperatureCelsiusField", JTextField.class);
+                EnvironmentSelector thermal = fieldLabeled(panel, "Sensación térmica", EnvironmentSelector.class);
+                require(ambient != null && thermal != null,
+                        "Ambient temperature and thermal sensation need separate inputs");
+                require((temperature == null ? "" : temperature.toString()).equals(ambient.getText()),
+                        "Editing must load the original optional ambient temperature");
+                require("17,5".equals(thermal.value()),
+                        "Loading ambient temperature must preserve the original thermal sensation text");
+                if (!Objects.equals(expectedTemperature, temperature)) {
+                    ambient.selectAll();
+                    ambient.replaceSelection(expectedTemperature.toString());
+                    require(panel.hasUnsavedChanges(), "Changing only ambient temperature is an edit");
+                }
+                findButton(panel, "Guardar cambios").doClick();
+            });
+            waitFor(() -> saveCallbacks.get() == callbacksBeforeSave + 1,
+                    "The temperature edit should finish saving");
+            require(savedInput.get() != null
+                            && Objects.equals(expectedTemperature, savedInput.get().temperatureCelsius()),
+                    "Saving must distinguish a negative temperature, zero and an unspecified value");
+            require("17,5".equals(savedInput.get().thermalSensation()),
+                    "Ambient temperature must never overwrite independent thermal sensation");
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            panel.edit(detailWithWeather(-5, "Sensación original"));
+            JTextField ambient = findNamed(panel, "temperatureCelsiusField", JTextField.class);
+            ambient.selectAll();
+            ambient.replaceSelection("-");
+            int previousCallbacks = saveCallbacks.get();
+            BirdEventInput previousInput = savedInput.get();
+            findButton(panel, "Guardar cambios").doClick();
+            require(saveCallbacks.get() == previousCallbacks && savedInput.get() == previousInput,
+                    "An unfinished negative temperature must not reach the repository");
+            JLabel error = findNamed(panel, "temperatureCelsiusError", JLabel.class);
+            require(error != null && !error.getText().isBlank() && "-".equals(ambient.getText()),
+                    "A failed save must explain and preserve the unfinished temperature");
+            panel.prepareNew();
+            require(ambient.getText().isEmpty()
+                            && fieldLabeled(panel, "Sensación térmica", EnvironmentSelector.class).value().isEmpty(),
+                    "A new event must clear both weather inputs without inheriting the edited values");
+            require(error.getText().isEmpty(), "A new event must clear the previous temperature error");
+        });
+    }
+
+    public static void detailShowsAmbientTemperatureSeparatelyFromThermalSensation() throws Exception {
+        AtomicReference<BirdEventDetail> current = new AtomicReference<>(detailWithWeather(-5, "18.2"));
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override public Optional<BirdEventDetail> findDetail(long eventId) {
+                return Optional.of(current.get());
+            }
+            @Override public List<com.adelylria.ringlog.model.view.BirdEventTimelineItem> findEventsByBird(long birdId) {
+                return List.of();
+            }
+        };
+        CaptureDetailPanel[] holder = new CaptureDetailPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            holder[0] = new CaptureDetailPanel(repository, () -> { }, ignored -> { });
+            holder[0].setEventId(31L);
+        });
+        CaptureDetailPanel panel = holder[0];
+        waitFor(() -> findLabel(panel, "-5 °C") != null && findLabel(panel, "18.2 °C") != null,
+                "The detail must show ambient temperature and thermal sensation independently");
+        current.set(detailWithWeather(0, "18.2"));
+        SwingUtilities.invokeAndWait(() -> panel.setEventId(31L));
+        waitFor(() -> findLabel(panel, "0 °C") != null && findLabel(panel, "-5 °C") == null,
+                "Zero must display as a real temperature, not as missing data");
+        current.set(detailWithWeather(null, "18.2"));
+        SwingUtilities.invokeAndWait(() -> panel.setEventId(31L));
+        waitFor(() -> findLabel(panel, "Temperatura ambiental") != null
+                        && findLabel(panel, "0 °C") == null && findLabel(panel, "18.2 °C") != null,
+                "An unspecified ambient temperature must not erase thermal sensation or its caption");
+
+        for (String qualitative : new String[] {"Templado", "Mucho frío", "Templat"}) {
+            current.set(detailWithWeather(22, qualitative));
+            SwingUtilities.invokeAndWait(() -> panel.setEventId(31L));
+            waitFor(() -> findLabel(panel, "22 °C") != null
+                            && findLabel(panel, qualitative) != null
+                            && findLabel(panel, qualitative + " °C") == null,
+                    "Qualitative thermal sensation must remain literal while ambient temperature shows its unit");
+        }
+        current.set(detailWithWeather(22, "23.8"));
+        SwingUtilities.invokeAndWait(() -> panel.setEventId(31L));
+        waitFor(() -> findLabel(panel, "22 °C") != null && findLabel(panel, "23.8 °C") != null,
+                "An older numeric thermal sensation must retain its Celsius presentation");
+        current.set(detailWithWeather(22, "-3,5 °C"));
+        SwingUtilities.invokeAndWait(() -> panel.setEventId(31L));
+        waitFor(() -> findLabel(panel, "22 °C") != null
+                        && findLabel(panel, "-3,5 °C") != null
+                        && findLabel(panel, "-3,5 °C °C") == null,
+                "A historical thermal sensation with an explicit unit must never receive a second unit");
+    }
+
+    public static void savingBeforeCatalogLoadKeepsHistoricalSpeciesAndPlace() throws Exception {
+        CountDownLatch initialPlaces = new CountDownLatch(1);
+        CountDownLatch slowPlaces = new CountDownLatch(1);
+        CountDownLatch releasePlaces = new CountDownLatch(1);
+        AtomicInteger placeLoads = new AtomicInteger();
+        CatalogRepository catalog = new CatalogRepository("unused.db") {
+            @Override public List<SpeciesOption> findSpeciesOptions() { return List.of(); }
+            @Override public List<PlaceSummary> findPlaceSummaries() {
+                if (placeLoads.incrementAndGet() == 1) {
+                    initialPlaces.countDown();
+                    return List.of();
+                }
+                slowPlaces.countDown();
+                try {
+                    require(releasePlaces.await(5, TimeUnit.SECONDS), "Release the deliberately delayed catalog");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(exception);
+                }
+                return List.of();
+            }
+            @Override public List<com.adelylria.ringlog.model.view.CaptureMethodOption> findCaptureMethods() {
+                return List.of();
+            }
+            @Override public List<com.adelylria.ringlog.model.view.EnvironmentOption> findEnvironmentOptions() {
+                return List.of();
+            }
+        };
+        AtomicReference<BirdEventInput> saved = new AtomicReference<>();
+        AtomicLong savedId = new AtomicLong();
+        BirdEventRepository repository = new BirdEventRepository("unused.db") {
+            @Override public void update(long eventId, BirdEventInput input) {
+                require(eventId == 31L, "A fast save must update the same historical event");
+                saved.set(input);
+            }
+        };
+        CapturePanel[] holder = new CapturePanel[1];
+        SwingUtilities.invokeAndWait(() -> holder[0] = new CapturePanel(repository, catalog, savedId::set, () -> { }));
+        require(initialPlaces.await(3, TimeUnit.SECONDS), "The initial catalog request should complete");
+        CapturePanel panel = holder[0];
+        try {
+            SwingUtilities.invokeAndWait(() -> panel.edit(historicalDetail()));
+            require(slowPlaces.await(3, TimeUnit.SECONDS), "The edit catalog must be blocked before saving");
+            SwingUtilities.invokeAndWait(() -> {
+                SpeciesOption species = (SpeciesOption) findNamed(panel, "speciesField", JComboBox.class).getSelectedItem();
+                PlaceSummary place = (PlaceSummary) findNamed(panel, "placeField", JComboBox.class).getSelectedItem();
+                require(species != null && species.id() == 91L && place != null && place.id() == 92L,
+                        "Historical species and place must be selected immediately, before catalog I/O completes");
+                findNamed(panel, "observationsField", javax.swing.JTextArea.class).setText("Notas guardadas antes de cargar");
+                findButton(panel, "Guardar cambios").doClick();
+            });
+            waitFor(() -> savedId.get() == 31L, "Saving must not wait for the blocked catalog query");
+            require(releasePlaces.getCount() == 1 && saved.get() != null && saved.get().speciesId() == 91L
+                            && Long.valueOf(92L).equals(saved.get().placeId()),
+                    "A fast save must keep both original identifiers while the catalog is still unavailable");
+        } finally { releasePlaces.countDown(); }
+    }
+
+    private static BirdEventDetail detailWithWeather(Integer temperature, String thermalSensation) {
+        BirdEventDetail source = historicalDetail();
+        return new BirdEventDetail(
+                source.id(), source.birdId(), source.ringNumber(), source.species(), source.eventType(),
+                source.eventDate(), source.eventTime(), source.place(), source.locality(), source.locationText(),
+                source.captureType(), source.sexCode(), source.ageEuringCode(), source.fatScore(),
+                source.muscleScore(), source.ringerInitials(), source.status(), source.reproductiveStatus(),
+                source.moultIntensity(), source.moultExtension(), source.birdCondition(), source.returnStatus(),
+                source.wing(), source.p3(), source.torso(), source.weight(), source.clouds(), source.rain(),
+                thermalSensation, source.wind(), null, null, source.observations(), source.dead(),
+                source.reviewStatus(), source.reviewNote(), source.photoPaths(), source.speciesId(),
+                source.placeId(), source.captureMethodId(), source.captureMethod(), temperature
+        );
+    }
+
     private static BirdEventDetail historicalDetail() {
         return new BirdEventDetail(
                 31L, 11L, "V6494", "Petirrojo europeo", EventType.RECOVERY,
@@ -523,6 +729,9 @@ public final class CapturePanelTest {
         birdStatusSelectorUsesTheOfficialCatalogAndStoresItsCode();
         editModeUsesTheFormAndKeepsHistoricalCatalogValues();
         placeSelectorShowsCoordinatesInOptionsAndSelection();
+        ambientTemperatureLoadsSavesAndClearsIndependentlyOfThermalSensation();
+        detailShowsAmbientTemperatureSeparatelyFromThermalSensation();
+        savingBeforeCatalogLoadKeepsHistoricalSpeciesAndPlace();
         System.out.println("CapturePanelTest: PASS");
     }
 }

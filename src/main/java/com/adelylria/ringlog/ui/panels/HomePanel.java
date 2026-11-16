@@ -1,6 +1,7 @@
 package com.adelylria.ringlog.ui.panels;
 
 import java.awt.BorderLayout;
+import java.awt.Point;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
@@ -10,6 +11,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingWorker;
+import javax.swing.SwingUtilities;
 
 import com.adelylria.ringlog.model.view.BirdEventTimelineItem;
 import com.adelylria.ringlog.model.view.DashboardStats;
@@ -30,6 +32,10 @@ public class HomePanel extends JPanel {
     private final JPanel statsPanel;
     private final TimelineView timelineView;
     private final JLabel statusLabel;
+    private JScrollPane scroll;
+    private Point returnPosition = new Point();
+    private boolean loaded;
+    private int loadGeneration;
 
     public HomePanel(
             BirdEventRepository eventRepository,
@@ -92,7 +98,7 @@ public class HomePanel extends JPanel {
         body.add(timelineSection, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
 
-        JScrollPane scroll = UiKit.scrollPane(page);
+        scroll = UiKit.scrollPane(page);
         add(scroll, BorderLayout.CENTER);
     }
 
@@ -103,6 +109,21 @@ public class HomePanel extends JPanel {
     }
 
     public void refresh() {
+        refresh(false);
+    }
+
+    public void rememberListPosition() {
+        returnPosition = new Point(scroll.getViewport().getViewPosition());
+    }
+
+    public void resumeAfterDetail(boolean dataChanged) {
+        if (!loaded || dataChanged) refresh(true);
+        else restorePosition(loadGeneration, returnPosition);
+    }
+
+    private void refresh(boolean preservePosition) {
+        int generation = ++loadGeneration;
+        Point position = preservePosition ? new Point(returnPosition) : new Point();
         statusLabel.setText("Cargando tu diario…");
 
         new SwingWorker<DashboardWithTimeline, Void>() {
@@ -116,6 +137,7 @@ public class HomePanel extends JPanel {
 
             @Override
             protected void done() {
+                if (generation != loadGeneration) return;
                 try {
                     DashboardWithTimeline data = get();
                     renderStats(data.stats());
@@ -123,12 +145,30 @@ public class HomePanel extends JPanel {
                     statusLabel.setText(data.timeline().isEmpty()
                             ? "Aún no hay registros"
                             : data.timeline().size() + " entradas guardadas");
+                    loaded = true;
+                    restorePosition(generation, position);
                 } catch (InterruptedException | ExecutionException exception) {
+                    loaded = false;
                     statusLabel.setText("No se ha podido cargar el diario");
                     timelineView.setItems(List.of(), onOpenEvent, 0);
                 }
             }
         }.execute();
+    }
+
+    private void restorePosition(int generation, Point position) {
+        SwingUtilities.invokeLater(() -> {
+            if (generation != loadGeneration) return;
+            scroll.validate();
+            scroll.getViewport().setViewPosition(new Point(position));
+            SwingUtilities.invokeLater(() -> {
+                if (generation != loadGeneration) return;
+                scroll.validate();
+                int maximum = Math.max(0, scroll.getViewport().getViewSize().height
+                        - scroll.getViewport().getExtentSize().height);
+                scroll.getViewport().setViewPosition(new Point(0, Math.min(position.y, maximum)));
+            });
+        });
     }
 
     private void renderStats(DashboardStats stats) {

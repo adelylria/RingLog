@@ -55,6 +55,10 @@ import com.adelylria.ringlog.ui.components.MeasurementInput;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.DateSelector;
 import com.adelylria.ringlog.ui.components.TimeSelector;
+import com.adelylria.ringlog.ui.components.TemperatureInput;
+import com.adelylria.ringlog.ui.components.EnvironmentSelector;
+import com.adelylria.ringlog.model.EnvironmentCategory;
+import com.adelylria.ringlog.model.view.EnvironmentOption;
 import com.adelylria.ringlog.ui.theme.RoundedBorder;
 import com.adelylria.ringlog.ui.theme.UiKit;
 
@@ -64,6 +68,7 @@ public class CapturePanel extends JPanel {
     private final CatalogRepository catalogRepository;
     private final Consumer<Long> onSaved;
     private final Runnable onCancel;
+    private Consumer<Long> onEditCancelled;
     private final JTextField ringNumberField;
     private final JComboBox<SpeciesOption> speciesCombo;
     private final JComboBox<EventType> eventTypeCombo;
@@ -80,10 +85,11 @@ public class CapturePanel extends JPanel {
     private final JTextField moultIntensityField;
     private final JTextField moultExtensionField;
     private final JTextField returnField;
-    private final JTextField cloudsField;
-    private final JTextField rainField;
-    private final JTextField thermalField;
-    private final JTextField windField;
+    private final EnvironmentSelector cloudsField;
+    private final EnvironmentSelector rainField;
+    private final EnvironmentSelector thermalField;
+    private final TemperatureInput temperatureInput;
+    private final EnvironmentSelector windField;
     private final JCheckBox deadCheck;
     private final JTextArea observationsArea;
     private final Map<String, JTextField> numberFields;
@@ -101,6 +107,7 @@ public class CapturePanel extends JPanel {
     private PlaceSummary pendingPlaceFallback;
     private int catalogLoadGeneration;
     private int captureMethodLoadGeneration;
+    private int environmentLoadGeneration;
     private Long originalCaptureMethodId;
     private final EventPhotoService photoService;
     private final EventPhotoEditor photoEditor;
@@ -128,6 +135,7 @@ public class CapturePanel extends JPanel {
         ringLookupTimer.stop();
         catalogLoadGeneration++;
         captureMethodLoadGeneration++;
+        environmentLoadGeneration++;
         if (photoEditor != null) photoEditor.discardPending();
         changes.markClean();
         return true;
@@ -154,6 +162,7 @@ public class CapturePanel extends JPanel {
         this.catalogRepository = catalogRepository;
         this.onSaved = onSaved;
         this.onCancel = onCancel;
+        this.onEditCancelled = onSaved;
         this.photoService = photoService;
         this.photoEditor = photoService == null ? null : java.util.Objects.requireNonNull(photoEditor);
         this.ringNumberField = new JTextField();
@@ -174,10 +183,11 @@ public class CapturePanel extends JPanel {
         this.moultIntensityField = new JTextField();
         this.moultExtensionField = new JTextField();
         this.returnField = new JTextField();
-        this.cloudsField = new JTextField();
-        this.rainField = new JTextField();
-        this.thermalField = new JTextField();
-        this.windField = new JTextField();
+        this.cloudsField = new EnvironmentSelector(EnvironmentCategory.CLOUDS, "cloudsField");
+        this.rainField = new EnvironmentSelector(EnvironmentCategory.RAIN, "rainField");
+        this.thermalField = new EnvironmentSelector(EnvironmentCategory.THERMAL_SENSATION, "thermalField");
+        this.temperatureInput = new TemperatureInput();
+        this.windField = new EnvironmentSelector(EnvironmentCategory.WIND, "windField");
         this.deadCheck = new JCheckBox("Ave fallecida");
         this.deadCheck.setOpaque(false);
         this.observationsArea = new JTextArea(5, 40);
@@ -295,10 +305,11 @@ public class CapturePanel extends JPanel {
         moultIntensityField.setText("");
         moultExtensionField.setText("");
         returnField.setText("");
-        cloudsField.setText("");
-        rainField.setText("");
-        thermalField.setText("");
-        windField.setText("");
+        cloudsField.setValue("");
+        rainField.setValue("");
+        thermalField.setValue("");
+        temperatureInput.setValue(null);
+        windField.setValue("");
         observationsArea.setText("");
         numberFields.values().forEach(field -> field.setText(""));
         deadCheck.setSelected(false);
@@ -362,6 +373,18 @@ public class CapturePanel extends JPanel {
                         false,
                         0
                 );
+        // Editing must be safe before the background catalog read finishes.
+        speciesCombo.removeAllItems();
+        if (pendingSpeciesFallback != null) {
+            speciesCombo.addItem(pendingSpeciesFallback);
+            speciesCombo.setSelectedItem(pendingSpeciesFallback);
+        }
+        placeCombo.removeAllItems();
+        placeCombo.addItem(null);
+        if (pendingPlaceFallback != null) {
+            placeCombo.addItem(pendingPlaceFallback);
+            placeCombo.setSelectedItem(pendingPlaceFallback);
+        }
         ringLookupTimer.stop();
         ringNumberField.setText(text(detail.ringNumber()));
         eventTypeCombo.setSelectedItem(detail.eventType());
@@ -376,10 +399,11 @@ public class CapturePanel extends JPanel {
         moultIntensityField.setText(text(detail.moultIntensity()));
         moultExtensionField.setText(text(detail.moultExtension()));
         returnField.setText(text(detail.returnStatus()));
-        cloudsField.setText(text(detail.clouds()));
-        rainField.setText(text(detail.rain()));
-        thermalField.setText(text(detail.thermalSensation()));
-        windField.setText(text(detail.wind()));
+        cloudsField.setValue(detail.clouds());
+        rainField.setValue(detail.rain());
+        thermalField.setValue(detail.thermalSensation());
+        temperatureInput.setValue(detail.temperatureCelsius());
+        windField.setValue(detail.wind());
         observationsArea.setText(text(detail.observations()));
         setNumber("wing", detail.wing());
         setNumber("p3", detail.p3());
@@ -424,10 +448,14 @@ public class CapturePanel extends JPanel {
         formGeneration++;
         if (photoEditor != null) photoEditor.discardPending();
         if (editingEventId != null) {
-            onSaved.accept(editingEventId);
+            onEditCancelled.accept(editingEventId);
         } else {
             onCancel.run();
         }
+    }
+
+    public void setOnEditCancelled(Consumer<Long> onEditCancelled) {
+        this.onEditCancelled = java.util.Objects.requireNonNull(onEditCancelled);
     }
 
     private JPanel createGeneralSection() {
@@ -504,6 +532,7 @@ public class CapturePanel extends JPanel {
         addField(grid, 1, "Lluvia", rainField);
         addField(grid, 2, "Viento", windField);
         addField(grid, 3, "Sensación térmica", thermalField);
+        addField(grid, 4, "Temperatura ambiental", temperatureInput);
         panel.add(grid, BorderLayout.CENTER);
         return panel;
     }
@@ -551,7 +580,9 @@ public class CapturePanel extends JPanel {
     private void addField(JPanel grid, int position, String label, Component field) {
         JPanel item = new JPanel(new BorderLayout(0, 6));
         item.setOpaque(false);
-        item.add(UiKit.muted(label), BorderLayout.NORTH);
+        JLabel caption = UiKit.muted(label);
+        if (field instanceof TemperatureInput temperature) caption.setLabelFor(temperature.field());
+        item.add(caption, BorderLayout.NORTH);
         item.add(field, BorderLayout.CENTER);
         item.setMinimumSize(new Dimension(0, item.getMinimumSize().height));
 
@@ -713,8 +744,42 @@ public class CapturePanel extends JPanel {
         return combo;
     }
 
+    public void refreshEnvironmentOptions() {
+        int generation = ++environmentLoadGeneration;
+        new SwingWorker<List<EnvironmentOption>, Void>() {
+            @Override protected List<EnvironmentOption> doInBackground() {
+                return catalogRepository.findEnvironmentOptions();
+            }
+
+            @Override protected void done() {
+                if (generation != environmentLoadGeneration || saving) return;
+                try {
+                    List<EnvironmentOption> options = get();
+                    for (EnvironmentSelector selector : List.of(
+                            cloudsField, rainField, thermalField, windField)) {
+                        boolean clean = !changes.isChanged(selector);
+                        selector.setOptions(options);
+                        if (clean) changes.acceptValue(selector);
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    environmentLoadFailed("Se ha interrumpido la carga de Entorno.");
+                } catch (ExecutionException exception) {
+                    environmentLoadFailed("No se ha podido cargar Entorno. Abre su catálogo para reintentarlo.");
+                }
+            }
+        }.execute();
+    }
+
+    private void environmentLoadFailed(String message) {
+        for (EnvironmentSelector selector : List.of(cloudsField, rainField, thermalField, windField)) {
+            selector.setToolTipText(message + " El valor actual se conserva.");
+        }
+    }
+
     public void refreshCatalogs() {
         refreshCaptureMethods();
+        refreshEnvironmentOptions();
         SpeciesOption selectedSpecies = (SpeciesOption) speciesCombo.getSelectedItem();
         PlaceSummary selectedPlace = (PlaceSummary) placeCombo.getSelectedItem();
         Long selectedSpeciesId = pendingSpeciesId != null
@@ -963,6 +1028,14 @@ public class CapturePanel extends JPanel {
         if (ringNumberField.getText().isBlank()) {
             throw new IllegalArgumentException("Indica el número de anilla.");
         }
+        if (!temperatureInput.validateValue()) {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                temperatureInput.scrollRectToVisible(new java.awt.Rectangle(
+                        0, 0, temperatureInput.getWidth(), temperatureInput.getHeight()));
+                temperatureInput.field().requestFocusInWindow();
+            });
+            throw new IllegalArgumentException(temperatureInput.errorMessage());
+        }
         SpeciesOption species = (SpeciesOption) speciesCombo.getSelectedItem();
         return new BirdEventInput(
                 normalizedRing(),
@@ -988,13 +1061,14 @@ public class CapturePanel extends JPanel {
                 parseOptionalDouble(numberFields.get("torso").getText()),
                 parseOptionalDouble(numberFields.get("weight").getText()),
                 observationsArea.getText().trim(),
-                cloudsField.getText().trim(),
-                rainField.getText().trim(),
-                thermalField.getText().trim(),
-                windField.getText().trim(),
+                cloudsField.value(),
+                rainField.value(),
+                thermalField.value(),
+                windField.value(),
                 preservedCaptureType,
                 deadCheck.isSelected(),
-                selectedCaptureMethodId()
+                selectedCaptureMethodId(),
+                temperatureInput.value()
         );
     }
 

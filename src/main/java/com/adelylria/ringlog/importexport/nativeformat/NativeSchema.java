@@ -10,6 +10,7 @@ final class NativeSchema {
 
     static final Map<String, List<String>> SHEETS;
     static final List<String> LEGACY_EVENT_COLUMNS;
+    static final List<String> PRE_TEMPERATURE_EVENT_COLUMNS;
     static final List<String> LEGACY_PLACE_COLUMNS = List.of(
             "stable_key", "name", "locality", "latitude", "longitude", "notes",
             "is_favorite", "is_default", "active", "created_at", "updated_at"
@@ -30,6 +31,7 @@ final class NativeSchema {
                 "created_at", "updated_at"
         ));
         sheets.put("capture_methods", List.of("stable_key", "name", "active"));
+        sheets.put("environment_options", List.of("stable_key", "category", "name", "active", "sort_order"));
         sheets.put("events", List.of(
                 "stable_key", "migration_key", "bird_stable_key", "event_type", "event_date",
                 "event_time", "place_stable_key", "location_text", "sex_code",
@@ -38,7 +40,7 @@ final class NativeSchema {
                 "return_status", "wing", "p3", "torso", "weight", "observations", "clouds",
                 "rain", "thermal_sensation", "wind", "capture_type", "is_dead",
                 "source_name", "source_reference", "review_status", "review_note",
-                "created_at", "updated_at", "capture_method_stable_key"
+                "created_at", "updated_at", "capture_method_stable_key", "temperature_celsius"
         ));
         sheets.put("photos", List.of(
                 "stable_key", "event_stable_key", "file_name", "original_file_path",
@@ -85,7 +87,8 @@ final class NativeSchema {
         ));
         SHEETS = Collections.unmodifiableMap(new LinkedHashMap<>(sheets));
         List<String> eventColumns = SHEETS.get("events");
-        LEGACY_EVENT_COLUMNS = List.copyOf(eventColumns.subList(0, eventColumns.size() - 1));
+        PRE_TEMPERATURE_EVENT_COLUMNS = List.copyOf(eventColumns.subList(0, eventColumns.size() - 1));
+        LEGACY_EVENT_COLUMNS = List.copyOf(eventColumns.subList(0, eventColumns.size() - 2));
     }
 
     private NativeSchema() {

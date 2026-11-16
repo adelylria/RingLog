@@ -16,19 +16,145 @@ public final class SchemaVersionContractTest {
     private SchemaVersionContractTest() {
     }
 
-    public static void freshDatabaseUsesSchemaV6() throws Exception {
-        Path root = Files.createTempDirectory("ringlog-schema-v5-fresh-");
+    public static void freshDatabaseUsesSchemaV8() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-schema-v8-fresh-");
         try {
             Path database = root.resolve("data/ringlog.db");
             Database.initialize(database.toString());
 
-            require(userVersion(database) == 6,
-                    "A fresh RingLog database must advertise capture-method schema v6");
-            require(Database.SCHEMA_VERSION == 6,
-                    "The shared current schema constant must be v6");
+            require(userVersion(database) == 8,
+                    "A fresh RingLog database must advertise environment-catalog schema v8");
+            require(Database.SCHEMA_VERSION == 8,
+                    "The shared current schema constant must be v8");
             require(hasColumn(database, "place", "autonomous_community")
                             && hasColumn(database, "place", "country"),
                     "A fresh database must include both administrative place fields");
+            require(hasColumn(database, "bird_event", "temperature_celsius"),
+                    "A fresh database must include independent optional ambient temperature");
+            require(hasColumn(database, "environment_option", "sort_order"),
+                    "A fresh database must include the ordered environment catalog");
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    public static void v6TemperatureUpgradeBacksUpAndPreservesHistoricalData() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-temperature-v6-to-v7-");
+        try {
+            AppPaths paths = AppPaths.forDataRoot(root);
+            Path database = paths.databasePath();
+            Database.initialize(database.toString());
+            insertPhoto(database, "events/history/photo.jpg");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.execute("ALTER TABLE bird_event DROP COLUMN temperature_celsius");
+                statement.execute("DROP TABLE environment_option");
+                statement.execute("PRAGMA user_version = 6");
+                statement.execute("""
+                        UPDATE bird_event SET thermal_sensation = '22° histórico',
+                            observations = 'Conservar notas', capture_method_id = 1
+                        """);
+            }
+            DatabaseUpgradeResult upgraded = new DatabaseUpgradeService().upgrade(paths);
+            require(upgraded.fromSchema() == 6 && upgraded.targetSchema() == 8
+                            && upgraded.steps().size() == 2,
+                    "A real schema-v6 diary must take the additive temperature and environment migrations");
+            require(upgraded.backup() != null && userVersion(upgraded.backup().database()) == 6
+                            && !hasColumn(upgraded.backup().database(), "bird_event", "temperature_celsius"),
+                    "The validated pre-upgrade backup must retain the original schema-v6 structure");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement();
+                 ResultSet row = statement.executeQuery("""
+                         SELECT id, stable_key, thermal_sensation, observations, capture_method_id,
+                                temperature_celsius FROM bird_event
+                         """)) {
+                require(row.next() && row.getLong("id") == 1
+                                && "00000000-0000-0000-0000-000000000003".equals(row.getString("stable_key"))
+                                && "22° histórico".equals(row.getString("thermal_sensation"))
+                                && "Conservar notas".equals(row.getString("observations"))
+                                && row.getLong("capture_method_id") == 1
+                                && row.getObject("temperature_celsius") == null,
+                        "Migration must preserve historical identity, notes, capture method and sensation with temperature NULL");
+            }
+            require("events/history/photo.jpg".equals(photoPath(database)),
+                    "The additive temperature migration must preserve photographs");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("UPDATE bird_event SET temperature_celsius = -99");
+                V6ToV7TemperatureMigration migration = new V6ToV7TemperatureMigration();
+                migration.migrate(connection);
+                migration.validate(connection);
+                for (String invalid : java.util.List.of("-100", "100", "1.5", "'invalid'")) {
+                    requireSqlFailure(() -> statement.executeUpdate(
+                                    "UPDATE bird_event SET temperature_celsius = " + invalid),
+                            "The migrated temperature column must enforce the same integer range as a fresh database");
+                }
+                try (ResultSet row = statement.executeQuery("SELECT temperature_celsius FROM bird_event")) {
+                    require(row.next() && row.getInt(1) == -99,
+                            "Repeating the additive migration and rejecting invalid writes must preserve a valid temperature");
+                }
+            }
+            Database.validate(database.toString());
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    public static void v7EnvironmentUpgradePreservesHistoricalTextAndTemperature() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-environment-v7-to-v8-");
+        try {
+            AppPaths paths = AppPaths.forDataRoot(root);
+            Path database = paths.databasePath();
+            Database.initialize(database.toString());
+            insertPhoto(database, "events/history/environment.jpg");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.execute("DROP TABLE environment_option");
+                statement.execute("PRAGMA user_version = 7");
+                statement.execute("""
+                        UPDATE bird_event SET clouds = 'Sí antiguo', rain = 'No histórico',
+                            thermal_sensation = '22° histórico', wind = 'Ligero', temperature_celsius = -5,
+                            observations = 'No reescribir', capture_method_id = 1
+                        """);
+            }
+            DatabaseUpgradeResult upgraded = new DatabaseUpgradeService().upgrade(paths);
+            require(upgraded.fromSchema() == 7 && upgraded.targetSchema() == 8 && upgraded.steps().size() == 1,
+                    "Schema-v7 diaries require exactly the additive environment catalog migration");
+            require(upgraded.backup() != null && userVersion(upgraded.backup().database()) == 7
+                            && !hasColumn(upgraded.backup().database(), "environment_option", "id"),
+                    "The validated pre-upgrade backup must retain the original schema-v7 diary");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement();
+                 ResultSet row = statement.executeQuery("""
+                         SELECT id, stable_key, clouds, rain, thermal_sensation, wind, temperature_celsius,
+                                observations, capture_method_id FROM bird_event
+                         """)) {
+                require(row.next() && row.getLong("id") == 1
+                                && "00000000-0000-0000-0000-000000000003".equals(row.getString("stable_key"))
+                                && "Sí antiguo".equals(row.getString("clouds"))
+                                && "No histórico".equals(row.getString("rain"))
+                                && "22° histórico".equals(row.getString("thermal_sensation"))
+                                && "Ligero".equals(row.getString("wind"))
+                                && row.getInt("temperature_celsius") == -5
+                                && "No reescribir".equals(row.getString("observations"))
+                                && row.getLong("capture_method_id") == 1,
+                        "Catalog creation must preserve historical values, identifiers, temperature, notes and capture method exactly");
+            }
+            require("events/history/environment.jpg".equals(photoPath(database)),
+                    "Catalog creation must preserve photograph references");
+            try (Connection connection = Database.getConnection(database.toString());
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("UPDATE environment_option SET active = 0 WHERE name = 'Nula'");
+                statement.executeUpdate("DELETE FROM environment_option WHERE category = 'RAIN' AND name = 'Débil'");
+                new V7ToV8EnvironmentMigration().migrate(connection);
+                new V7ToV8EnvironmentMigration().validate(connection);
+                try (ResultSet row = statement.executeQuery("SELECT COUNT(*), SUM(active) FROM environment_option")) {
+                    require(row.next() && row.getInt(1) == 17 && row.getInt(2) == 16,
+                            "Repeating migration must not reinsert removed seeds or reactivate hidden options");
+                }
+            }
+            Database.initialize(database.toString());
+            Database.validate(database.toString());
         } finally {
             deleteDirectory(root);
         }
@@ -310,7 +436,9 @@ public final class SchemaVersionContractTest {
     }
 
     public static void main(String[] args) throws Exception {
-        freshDatabaseUsesSchemaV6();
+        freshDatabaseUsesSchemaV8();
+        v7EnvironmentUpgradePreservesHistoricalTextAndTemperature();
+        v6TemperatureUpgradeBacksUpAndPreservesHistoricalData();
         v5CaptureMethodMigrationPreservesHistoricalEvents();
         schemaV3UsesLegacyMediaSemantics();
         v3DatabaseIsRecognizedAsNeedingMediaMigration();

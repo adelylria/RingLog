@@ -29,6 +29,7 @@ import com.adelylria.ringlog.ui.panels.CaptureDetailPanel;
 import com.adelylria.ringlog.ui.panels.CaptureListPanel;
 import com.adelylria.ringlog.ui.panels.CapturePanel;
 import com.adelylria.ringlog.ui.panels.CaptureMethodsPanel;
+import com.adelylria.ringlog.ui.panels.EnvironmentPanel;
 import com.adelylria.ringlog.ui.panels.HomePanel;
 import com.adelylria.ringlog.ui.panels.PlacePanel;
 import com.adelylria.ringlog.ui.panels.ReportsPanel;
@@ -48,6 +49,7 @@ public class MainFrame extends JFrame {
     public static final String SPECIES = "SPECIES";
     public static final String PLACES = "PLACES";
     public static final String CAPTURE_METHODS = "CAPTURE_METHODS";
+    public static final String ENVIRONMENT = "ENVIRONMENT";
     public static final String REPORTS = "REPORTS";
     public static final String CONFLICTS = "CONFLICTS";
     public static final String SETTINGS = "SETTINGS";
@@ -69,6 +71,7 @@ public class MainFrame extends JFrame {
     private final SpeciesPanel speciesPanel;
     private final PlacePanel placePanel;
     private final CaptureMethodsPanel captureMethodsPanel;
+    private final EnvironmentPanel environmentPanel;
     private final ReportsPanel reportsPanel;
     private final ConflictsPanel conflictsPanel;
     private final SettingsPanel settingsPanel;
@@ -81,6 +84,10 @@ public class MainFrame extends JFrame {
     private boolean portableCreationBusy;
     private boolean snapshotBusy;
     private String currentScreen;
+    private String detailReturnScreen = CAPTURES;
+    private String captureReturnScreen = CAPTURES;
+    private boolean captureListNeedsRefresh = true;
+    private boolean homeNeedsRefresh = true;
 
     /** Shared by sidebar navigation, closing and destructive context changes. */
     public boolean confirmLeaveCurrentEditor() {
@@ -88,6 +95,7 @@ public class MainFrame extends JFrame {
         if (PLACES.equals(currentScreen)) return placePanel.confirmLeave();
         if (SPECIES.equals(currentScreen)) return speciesPanel.confirmLeave();
         if (CAPTURE_METHODS.equals(currentScreen)) return captureMethodsPanel.confirmLeave();
+        if (ENVIRONMENT.equals(currentScreen)) return environmentPanel.confirmLeave();
         return true;
     }
 
@@ -138,7 +146,7 @@ public class MainFrame extends JFrame {
         );
         captureDetailPanel = new CaptureDetailPanel(
                 eventRepository,
-                () -> navigate(CAPTURES),
+                () -> navigate(detailReturnScreen),
                 this::editEvent,
                 context.capabilities().mutateDiary(),
                 context.paths().dataRoot().resolve("map-cache")
@@ -147,10 +155,11 @@ public class MainFrame extends JFrame {
                 ? new CapturePanel(
                 eventRepository,
                 catalogRepository,
-                this::showEvent,
-                () -> navigate(CAPTURES),
+                this::captureSaved,
+                () -> navigate(captureReturnScreen),
                 context.mutationServices().orElseThrow().eventPhotos()
         ) : null;
+        if (capturePanel != null) capturePanel.setOnEditCancelled(ignored -> navigate(CAPTURE_DETAIL));
         speciesPanel = new SpeciesPanel(
                 catalogRepository, context.capabilities().manageCatalogs()
         );
@@ -160,6 +169,10 @@ public class MainFrame extends JFrame {
         captureMethodsPanel = new CaptureMethodsPanel(
                 catalogRepository, context.capabilities().manageCatalogs(),
                 () -> { if (capturePanel != null) capturePanel.refreshCaptureMethods(); }
+        );
+        environmentPanel = new EnvironmentPanel(
+                catalogRepository, context.capabilities().manageCatalogs(),
+                () -> { if (capturePanel != null) capturePanel.refreshEnvironmentOptions(); }
         );
         reportsPanel = new ReportsPanel(eventRepository, catalogRepository);
 
@@ -241,6 +254,7 @@ public class MainFrame extends JFrame {
         contentPanel.add(speciesPanel, SPECIES);
         contentPanel.add(placePanel, PLACES);
         contentPanel.add(captureMethodsPanel, CAPTURE_METHODS);
+        contentPanel.add(environmentPanel, ENVIRONMENT);
         contentPanel.add(reportsPanel, REPORTS);
         contentPanel.add(conflictsPanel, CONFLICTS);
         contentPanel.add(settingsPanel, SETTINGS);
@@ -306,16 +320,36 @@ public class MainFrame extends JFrame {
                 && !context.capabilities().createPortableCopy())) {
             screen = HOME;
         }
+        if (CAPTURES.equals(currentScreen) && !CAPTURES.equals(screen)) captureListPanel.rememberListPosition();
+        if (HOME.equals(currentScreen) && !HOME.equals(screen)) homePanel.rememberListPosition();
+        if (!java.util.Objects.equals(currentScreen, screen)
+                && (SPECIES.equals(currentScreen) || PLACES.equals(currentScreen)
+                || CAPTURE_METHODS.equals(currentScreen) || ENVIRONMENT.equals(currentScreen))) {
+            captureListNeedsRefresh = true;
+            homeNeedsRefresh = true;
+        }
+        if (NEW_CAPTURE.equals(screen) && !NEW_CAPTURE.equals(currentScreen)) {
+            captureReturnScreen = HOME.equals(currentScreen) ? HOME
+                    : CAPTURE_DETAIL.equals(currentScreen) ? detailReturnScreen : CAPTURES;
+            detailReturnScreen = captureReturnScreen;
+        }
         cardLayout.show(contentPanel, screen);
         currentScreen = screen;
         sidebar.setActiveDestination(screen);
         switch (screen) {
-            case HOME -> homePanel.refresh();
-            case CAPTURES -> captureListPanel.refresh();
+            case HOME -> {
+                homePanel.resumeAfterDetail(homeNeedsRefresh);
+                homeNeedsRefresh = false;
+            }
+            case CAPTURES -> {
+                captureListPanel.resumeAfterDetail(captureListNeedsRefresh);
+                captureListNeedsRefresh = false;
+            }
             case NEW_CAPTURE -> capturePanel.prepareNew();
             case SPECIES -> speciesPanel.refresh();
             case PLACES -> placePanel.refresh();
             case CAPTURE_METHODS -> captureMethodsPanel.refresh();
+            case ENVIRONMENT -> environmentPanel.refresh();
             case REPORTS -> reportsPanel.refresh();
             case CONFLICTS -> conflictsPanel.refresh();
             case PORTABLE_COPY -> portableCopyPanel.prepare();
@@ -326,8 +360,16 @@ public class MainFrame extends JFrame {
     }
 
     public void showEvent(long eventId) {
+        if (HOME.equals(currentScreen) || CAPTURES.equals(currentScreen)) detailReturnScreen = currentScreen;
+        captureDetailPanel.setReturnDestination(HOME.equals(detailReturnScreen) ? "Diario" : "registros");
         captureDetailPanel.setEventId(eventId);
         navigate(CAPTURE_DETAIL);
+    }
+
+    private void captureSaved(long eventId) {
+        captureListNeedsRefresh = true;
+        homeNeedsRefresh = true;
+        showEvent(eventId);
     }
 
     private void editEvent(BirdEventDetail detail) {
@@ -341,14 +383,18 @@ public class MainFrame extends JFrame {
     }
 
     private void refreshImportedData() {
-        homePanel.refresh();
-        captureListPanel.refresh();
+        catalogRepository.invalidateEnvironmentOptions();
+        homePanel.resumeAfterDetail(true);
+        captureListPanel.resumeAfterDetail(true);
+        homeNeedsRefresh = false;
+        captureListNeedsRefresh = false;
         if (capturePanel != null) {
             capturePanel.refreshCatalogs();
         }
         speciesPanel.refresh();
         placePanel.refresh();
         captureMethodsPanel.refresh();
+        environmentPanel.refresh();
         reportsPanel.refresh();
         conflictsPanel.refresh();
     }
@@ -402,6 +448,7 @@ public class MainFrame extends JFrame {
         speciesPanel.setMutationActionsEnabled(enabled);
         placePanel.setMutationActionsEnabled(enabled);
         captureMethodsPanel.setMutationActionsEnabled(enabled);
+        environmentPanel.setMutationActionsEnabled(enabled);
         conflictsPanel.setMutationActionsEnabled(enabled);
         settingsPanel.setMutationActionsEnabled(enabled);
         if (capturePanel != null) {

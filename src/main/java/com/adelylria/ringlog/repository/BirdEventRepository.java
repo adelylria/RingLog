@@ -131,6 +131,7 @@ public class BirdEventRepository {
                 e.clouds,
                 e.rain,
                 e.thermal_sensation,
+                e.temperature_celsius,
                 e.wind,
                 p.latitude,
                 p.longitude,
@@ -315,6 +316,7 @@ public class BirdEventRepository {
                     e.clouds,
                     e.rain,
                     e.thermal_sensation,
+                    e.temperature_celsius,
                     e.wind,
                     p.latitude,
                     p.longitude,
@@ -469,7 +471,8 @@ public class BirdEventRepository {
                 result.getLong("species_id"),
                 nullableJdbcLong(result, "place_id"),
                 nullableJdbcLong(result, "capture_method_id"),
-                result.getString("capture_method")
+                result.getString("capture_method"),
+                nullableJdbcInteger(result, "temperature_celsius")
         );
     }
 
@@ -823,6 +826,10 @@ public class BirdEventRepository {
         if (input.captureMethodId() != null && input.captureMethodId() < 1) {
             throw new IllegalArgumentException("Selecciona un método de captura válido.");
         }
+        if (input.temperatureCelsius() != null
+                && (input.temperatureCelsius() < -99 || input.temperatureCelsius() > 99)) {
+            throw new IllegalArgumentException("La temperatura ambiental debe estar entre -99 y 99 °C.");
+        }
         validateMeasurement(input.wing(), "ala");
         validateMeasurement(input.p3(), "P3");
         validateMeasurement(input.torso(), "tarso");
@@ -905,7 +912,8 @@ public class BirdEventRepository {
                 getLong(result, "species_id"),
                 getIntegerLong(result, "place_id"),
                 getIntegerLong(result, "capture_method_id"),
-                getString(result, "capture_method")
+                getString(result, "capture_method"),
+                getInteger(result, "temperature_celsius")
         );
     }
 

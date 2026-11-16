@@ -135,6 +135,8 @@ public final class LegacyImportService {
         );
         Map<String, Long> placeIds = importPlaces(placeDao, data.places(), counters);
         Map<String, Long> captureMethodIds = importCaptureMethods(speciesDao, data);
+        com.adelylria.ringlog.importexport.service.EnvironmentCatalogRestore
+                .restore(speciesDao, data.environmentOptions());
         Map<String, Long> eventIds = importEvents(
                 eventDao,
                 data.events(),
@@ -546,6 +548,7 @@ public final class LegacyImportService {
                 && Objects.equals(event.getObservations(), row.observations())
                 && Objects.equals(event.getClouds(), row.clouds())
                 && Objects.equals(event.getRain(), row.rain())
+                && Objects.equals(event.getTemperatureCelsius(), row.temperatureCelsius())
                 && Objects.equals(
                         event.getThermalSensation(),
                         row.thermalSensation()
@@ -669,6 +672,7 @@ public final class LegacyImportService {
         event.setClouds(row.clouds());
         event.setRain(row.rain());
         event.setThermalSensation(row.thermalSensation());
+        event.setTemperatureCelsius(row.temperatureCelsius());
         event.setWind(row.wind());
         event.setCaptureType(row.captureType());
         event.setDead(row.dead());

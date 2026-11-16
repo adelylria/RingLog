@@ -101,6 +101,9 @@ public class BirdEventEntity {
     @DatabaseField(columnName = "thermal_sensation")
     private String thermalSensation;
 
+    @DatabaseField(columnName = "temperature_celsius")
+    private Integer temperatureCelsius;
+
     @DatabaseField(columnName = "wind")
     private String wind;
 
@@ -158,6 +161,7 @@ public class BirdEventEntity {
         clouds = blankToNull(input.clouds());
         rain = blankToNull(input.rain());
         thermalSensation = blankToNull(input.thermalSensation());
+        temperatureCelsius = input.temperatureCelsius();
         wind = blankToNull(input.wind());
         captureType = blankToNull(input.captureType());
         captureMethodId = input.captureMethodId();
@@ -386,6 +390,14 @@ public class BirdEventEntity {
 
     public void setThermalSensation(String thermalSensation) {
         this.thermalSensation = thermalSensation;
+    }
+
+    public Integer getTemperatureCelsius() {
+        return temperatureCelsius;
+    }
+
+    public void setTemperatureCelsius(Integer temperatureCelsius) {
+        this.temperatureCelsius = temperatureCelsius;
     }
 
     public String getWind() {

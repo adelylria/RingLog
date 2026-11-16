@@ -123,6 +123,9 @@ public final class LegacyWorkbookReader {
                     ? readCaptureMethods(workbook) : List.of();
             backupEventCaptureMethods = formatVersion == BACKUP_FORMAT_VERSION
                     ? readEventCaptureMethods(workbook) : Map.of();
+            var environmentOptions = formatVersion == BACKUP_FORMAT_VERSION
+                    ? readEnvironmentOptions(workbook) : List
+                            .<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.EnvironmentOptionRow>of();
             List<PhotoRow> photos = readPhotos(workbook, formatVersion);
             if (formatVersion == MIGRATOR_FORMAT_VERSION) {
                 validateMigratorAudit(workbook, metadata);
@@ -147,6 +150,9 @@ public final class LegacyWorkbookReader {
             if (metadata.containsKey("capture_methods_count")) {
                 validateCount(metadata, "capture_methods_count", backupCaptureMethods.size());
             }
+            if (metadata.containsKey("environment_options_count")) {
+                validateCount(metadata, "environment_options_count", environmentOptions.size());
+            }
 
             return new LegacyImportData(
                     workbookFile,
@@ -158,7 +164,8 @@ public final class LegacyWorkbookReader {
                     photos,
                     warnings,
                     backupCaptureMethods,
-                    backupEventCaptureMethods
+                    backupEventCaptureMethods,
+                    environmentOptions
             );
         } catch (LegacyImportException exception) {
             throw exception;
@@ -214,7 +221,7 @@ public final class LegacyWorkbookReader {
                                 row.observations(), row.clouds(), row.rain(), row.thermalSensation(),
                                 row.wind(), row.captureType(), row.dead(), row.sourceName(),
                                 row.sourceReference(), row.sourceAliases(), row.createdAt(),
-                                row.updatedAt(), backupEventCaptureMethods.get(row.key())
+                                row.updatedAt(), backupEventCaptureMethods.get(row.key()), row.temperatureCelsius()
                         )).toList(),
                 data.photos().stream().map(row ->
                         new com.adelylria.ringlog.importexport.compatibility
@@ -228,8 +235,38 @@ public final class LegacyWorkbookReader {
                                 .RingLogV3BackupModel.WarningRow(
                                 row.severity(), row.source(), row.reference(), row.message()
                         )).toList(),
-                backupCaptureMethods
+                backupCaptureMethods,
+                data.environmentOptions()
         );
+    }
+
+    private List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.EnvironmentOptionRow>
+            readEnvironmentOptions(Workbook workbook) throws LegacyImportException {
+        Sheet sheet = workbook.getSheet("environment_options");
+        if (sheet == null) return List.of();
+        Map<String, Integer> columns = columns(sheet, "stable_key", "category", "name", "active", "sort_order");
+        var rows = new ArrayList<com.adelylria.ringlog.importexport.compatibility
+                .RingLogV3BackupModel.EnvironmentOptionRow>();
+        Set<String> keys = new HashSet<>();
+        Set<String> names = new HashSet<>();
+        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+            Row row = sheet.getRow(index);
+            if (isEmpty(row)) continue;
+            String key = requiredNonBlankText(row, columns, "stable_key", sheet, index);
+            java.util.UUID.fromString(key);
+            String category = requiredNonBlankText(row, columns, "category", sheet, index);
+            com.adelylria.ringlog.model.EnvironmentCategory.valueOf(category);
+            String name = requiredNonBlankText(row, columns, "name", sheet, index);
+            String normalized = name.trim().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT);
+            if (!keys.add(key) || !names.add(category + '\u0000' + normalized)) {
+                throw invalid(sheet, index, "Opción de entorno duplicada.");
+            }
+            rows.add(new com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel
+                    .EnvironmentOptionRow(key, category, name,
+                            requiredBoolean(row, columns, "active", sheet, index),
+                            requiredNonNegativeInteger(row, columns, "sort_order", sheet, index)));
+        }
+        return List.copyOf(rows);
     }
 
     private List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.CaptureMethodRow>
@@ -577,7 +614,8 @@ public final class LegacyWorkbookReader {
                             : null,
                     isBackupFormat(formatVersion)
                             ? optionalText(row, columns, "updated_at")
-                            : null
+                            : null,
+                    optionalTemperature(row, columns, sheet, rowIndex)
             ));
         }
         return rows;
@@ -1484,6 +1522,16 @@ public final class LegacyWorkbookReader {
             throw invalid(sheet, rowIndex, column + " debe ser un número entero.");
         }
         return value.intValue();
+    }
+
+    private Integer optionalTemperature(Row row, Map<String, Integer> columns, Sheet sheet, int rowIndex)
+            throws LegacyImportException {
+        if (!columns.containsKey("temperature_celsius")) return null;
+        Integer value = optionalInteger(row, columns, "temperature_celsius", sheet, rowIndex);
+        if (value != null && (value < -99 || value > 99)) {
+            throw invalid(sheet, rowIndex, "temperature_celsius debe estar entre -99 y 99.");
+        }
+        return value;
     }
 
     private int requiredNonNegativeInteger(

@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -31,6 +32,8 @@ import com.adelylria.ringlog.model.view.BirdEventReportRow;
 
 final class PdfRecordReportWriter {
 
+    private static final Pattern NUMERIC_TEXT = Pattern.compile(
+            "[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)(?:[eE][+-]?[0-9]+)?");
     private static final Color DARK = new Color(25, 38, 31);
     private static final Color GREEN = new Color(55, 116, 80);
     private static final Color ACCENT = new Color(147, 197, 165);
@@ -436,6 +439,7 @@ final class PdfRecordReportWriter {
         return List.of(
                 field("Nubes", RecordReportText.friendly(record.clouds())),
                 field("Lluvia", RecordReportText.friendly(record.rain())),
+                field("Temperatura", record.temperatureCelsius() == null ? null : record.temperatureCelsius() + " °C"),
                 field("Sensación térmica", unitText(record.thermalSensation(), "°C")),
                 field("Viento", RecordReportText.friendly(record.wind())),
                 field("Coordenadas", RecordReportText.coordinates(
@@ -727,11 +731,13 @@ final class PdfRecordReportWriter {
         strokeRect(content, x, bottom, width, height, BORDER);
         text(content, bold, 9.2f, GREEN, x + 13, bottom + height - 21, title);
         float columnWidth = (width - 26) / 2;
+        int rows = (fields.size() + 1) / 2;
+        float rowSpacing = rows <= 1 ? 18 : Math.min(18, (height - 57) / (rows - 1));
         for (int index = 0; index < fields.size(); index++) {
             int column = index % 2;
             int row = index / 2;
             float fieldX = x + 13 + column * columnWidth;
-            float y = bottom + height - 45 - row * 18;
+            float y = bottom + height - 45 - row * rowSpacing;
             Field field = fields.get(index);
             text(content, regular, 8.2f, MUTED, fieldX, y, field.label());
             fittedText(
@@ -1137,7 +1143,9 @@ final class PdfRecordReportWriter {
     }
 
     private static String unitText(String value, String unit) {
-        return value == null || value.isBlank() ? "—" : value + " " + unit;
+        if (value == null || value.isBlank()) return "—";
+        String text = value.trim();
+        return NUMERIC_TEXT.matcher(text).matches() ? text + " " + unit : value;
     }
 
     private static PDFont loadRegularFont(PDDocument document) throws IOException {

@@ -41,8 +41,11 @@ import com.adelylria.ringlog.importexport.LegacyImportTransactionTest;
 import com.adelylria.ringlog.importexport.ConflictResolutionServiceTest;
 import com.adelylria.ringlog.importexport.RingLogV3CompatibilityTest;
 import com.adelylria.ringlog.importexport.NativeExportRoundTripTest;
+import com.adelylria.ringlog.importexport.EnvironmentCatalogTransportTest;
 import com.adelylria.ringlog.repository.BirdEventRepositoryTest;
 import com.adelylria.ringlog.repository.CatalogRepositoryTest;
+import com.adelylria.ringlog.repository.EnvironmentCatalogRepositoryTest;
+import com.adelylria.ringlog.repository.EnvironmentCatalogPerformanceTest;
 import com.adelylria.ringlog.report.RecordReportServiceTest;
 import com.adelylria.ringlog.report.PdfRecordReportWriterTest;
 import com.adelylria.ringlog.storage.AppPathsTest;
@@ -54,7 +57,12 @@ import com.adelylria.ringlog.ui.BirdEventUiTest;
 import com.adelylria.ringlog.ui.ApplicationIconTest;
 import com.adelylria.ringlog.ui.CalendarDatePickerTest;
 import com.adelylria.ringlog.ui.CapturePanelTest;
+import com.adelylria.ringlog.ui.CaptureListPositionTest;
+import com.adelylria.ringlog.ui.CaptureReturnNavigationTest;
+import com.adelylria.ringlog.ui.TemperatureInputTest;
 import com.adelylria.ringlog.ui.CaptureMethodUiTest;
+import com.adelylria.ringlog.ui.EnvironmentCatalogUiTest;
+import com.adelylria.ringlog.ui.EnvironmentDropdownTest;
 import com.adelylria.ringlog.ui.DateRangeFilterTest;
 import com.adelylria.ringlog.ui.TimelinePhotoLoadingTest;
 import com.adelylria.ringlog.ui.EventPhotoGalleryTest;
@@ -131,12 +139,15 @@ public final class RingLogTestSuite {
                 ConflictResolutionServiceTest.class,
                 RingLogV3CompatibilityTest.class,
                 NativeExportRoundTripTest.class,
+                EnvironmentCatalogTransportTest.class,
                 LegacyImportServiceTest.class,
                 BackupExportServiceTest.class,
                 RecordReportServiceTest.class,
                 PdfRecordReportWriterTest.class,
                 BirdEventRepositoryTest.class,
                 CatalogRepositoryTest.class,
+                EnvironmentCatalogRepositoryTest.class,
+                EnvironmentCatalogPerformanceTest.class,
                 PortableReadOnlyTest.class,
                 PortableCopyServiceTest.class,
                 ApplicationIconTest.class,
@@ -145,7 +156,12 @@ public final class RingLogTestSuite {
                 BirdEventUiTest.class,
                 CatalogFormTest.class,
                 CapturePanelTest.class,
+                CaptureListPositionTest.class,
+                CaptureReturnNavigationTest.class,
+                TemperatureInputTest.class,
                 CaptureMethodUiTest.class,
+                EnvironmentCatalogUiTest.class,
+                EnvironmentDropdownTest.class,
                 DateRangeFilterTest.class,
                 TimelinePhotoLoadingTest.class,
                 EventPhotoGalleryTest.class,

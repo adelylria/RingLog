@@ -15,7 +15,9 @@ record LegacyImportData(
         List<ImportWarning> warnings,
         List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.CaptureMethodRow>
                 captureMethods,
-        Map<String, String> eventCaptureMethods
+        Map<String, String> eventCaptureMethods,
+        List<com.adelylria.ringlog.importexport.compatibility.RingLogV3BackupModel.EnvironmentOptionRow>
+                environmentOptions
 ) {
 
     LegacyImportData {
@@ -27,6 +29,7 @@ record LegacyImportData(
         warnings = List.copyOf(warnings);
         captureMethods = List.copyOf(captureMethods);
         eventCaptureMethods = Map.copyOf(eventCaptureMethods);
+        environmentOptions = List.copyOf(environmentOptions);
     }
 }
 
@@ -98,7 +101,8 @@ record EventRow(
         String sourceReference,
         List<String> sourceAliases,
         String createdAt,
-        String updatedAt
+        String updatedAt,
+        Integer temperatureCelsius
 ) {
     EventRow {
         sourceAliases = List.copyOf(sourceAliases);

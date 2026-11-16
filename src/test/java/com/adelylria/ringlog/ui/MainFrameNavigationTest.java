@@ -51,6 +51,18 @@ public final class MainFrameNavigationTest {
         return null;
     }
 
+    public static void environmentHasItsOwnCatalogRoute() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            AtomicReference<String> destination = new AtomicReference<>();
+            Sidebar sidebar = new Sidebar(destination::set);
+            JButton environment = button(sidebar, "Entorno");
+            require(environment != null, "Environment needs its own catalog action");
+            environment.doClick();
+            require(MainFrame.ENVIRONMENT.equals(destination.get()),
+                    "The environment action must navigate to the environment catalog");
+        });
+    }
+
     private static void require(boolean condition, String message) {
         if (!condition) {
             throw new AssertionError(message);
@@ -61,6 +73,7 @@ public final class MainFrameNavigationTest {
         diaryIsTheInitialScreen();
         detailHasItsOwnRoute();
         captureMethodsHaveTheirOwnCatalogRoute();
+        environmentHasItsOwnCatalogRoute();
         System.out.println("MainFrameNavigationTest: PASS");
     }
 }

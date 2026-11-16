@@ -80,6 +80,7 @@ public class Sidebar extends JPanel {
         addNavigation(menu, "Especies", MainFrame.SPECIES, NavigationIcon.Kind.SPECIES);
         addNavigation(menu, "Lugares", MainFrame.PLACES, NavigationIcon.Kind.PLACES);
         addNavigation(menu, "Métodos de captura", MainFrame.CAPTURE_METHODS, NavigationIcon.Kind.METHODS);
+        addNavigation(menu, "Entorno", MainFrame.ENVIRONMENT, NavigationIcon.Kind.PLACES);
         addNavigation(menu, "Informes", MainFrame.REPORTS, NavigationIcon.Kind.REPORTS);
         addNavigation(menu, "Revisiones", MainFrame.CONFLICTS, NavigationIcon.Kind.REVIEWS);
 

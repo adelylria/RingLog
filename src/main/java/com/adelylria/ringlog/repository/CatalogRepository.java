@@ -6,12 +6,15 @@ import com.adelylria.ringlog.application.DataMutationCoordinator;
 import com.adelylria.ringlog.storage.AppPaths;
 import com.adelylria.ringlog.database.entity.BirdEntity;
 import com.adelylria.ringlog.database.entity.CaptureMethodEntity;
+import com.adelylria.ringlog.database.entity.EnvironmentOptionEntity;
 import com.adelylria.ringlog.database.entity.PlaceEntity;
 import com.adelylria.ringlog.database.entity.SpeciesEntity;
 import com.adelylria.ringlog.model.input.PlaceInput;
 import com.adelylria.ringlog.model.input.SpeciesInput;
 import com.adelylria.ringlog.model.view.BirdOption;
 import com.adelylria.ringlog.model.view.CaptureMethodOption;
+import com.adelylria.ringlog.model.EnvironmentCategory;
+import com.adelylria.ringlog.model.view.EnvironmentOption;
 import com.adelylria.ringlog.model.view.PlaceSummary;
 import com.adelylria.ringlog.model.view.SpeciesOption;
 import com.adelylria.ringlog.model.view.SpeciesSummary;
@@ -30,6 +33,10 @@ public class CatalogRepository {
 
     private final DatabaseAccess databaseAccess;
     private final DataMutationCoordinator mutationCoordinator;
+    private final Object environmentCatalogLock = new Object();
+    private List<EnvironmentOption> environmentOptions;
+    private long environmentCatalogGeneration;
+    private boolean environmentCatalogLoading;
 
     public CatalogRepository() {
         this(AppPaths.production().databasePath().toString());
@@ -281,6 +288,164 @@ public class CatalogRepository {
         } catch (SQLException exception) {
             throw new RepositoryException("Error actualizando el método de captura", exception);
         }
+    }
+
+    private static final Comparator<EnvironmentOptionEntity> ENVIRONMENT_ORDER = Comparator
+            .comparingInt((EnvironmentOptionEntity option) -> option.getCategory().ordinal())
+            .thenComparingInt(EnvironmentOptionEntity::getSortOrder)
+            .thenComparing(EnvironmentOptionEntity::getName, String.CASE_INSENSITIVE_ORDER)
+            .thenComparingLong(EnvironmentOptionEntity::id);
+
+    /** One immutable snapshot supplies all four selectors until a catalog mutation invalidates it. */
+    public List<EnvironmentOption> findEnvironmentOptions() {
+        for (;;) {
+            long generation;
+            synchronized (environmentCatalogLock) {
+                while (environmentOptions == null && environmentCatalogLoading) {
+                    try {
+                        environmentCatalogLock.wait();
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw new RepositoryException("Se interrumpió la carga del catálogo de Entorno", exception);
+                    }
+                }
+                if (environmentOptions != null) return environmentOptions;
+                generation = environmentCatalogGeneration;
+                environmentCatalogLoading = true;
+            }
+            List<EnvironmentOption> loaded = null;
+            try {
+                // Database I/O stays outside the monitor so invalidation never waits for SQLite.
+                loaded = loadEnvironmentOptions();
+            } finally {
+                synchronized (environmentCatalogLock) {
+                    environmentCatalogLoading = false;
+                    if (loaded != null && generation == environmentCatalogGeneration) environmentOptions = loaded;
+                    environmentCatalogLock.notifyAll();
+                }
+            }
+            synchronized (environmentCatalogLock) {
+                if (environmentOptions != null) return environmentOptions;
+            }
+            // A concurrent import or edit invalidated the in-flight query: load a fresh generation.
+        }
+    }
+
+    /** Call after an import or restore that changes this repository's database directly. */
+    public void invalidateEnvironmentOptions() {
+        synchronized (environmentCatalogLock) {
+            environmentCatalogGeneration++;
+            environmentOptions = null;
+            environmentCatalogLock.notifyAll();
+        }
+    }
+
+    private List<EnvironmentOption> loadEnvironmentOptions() {
+        try {
+            return databaseAccess.withOrm(source -> {
+                Dao<EnvironmentOptionEntity, Long> dao = DaoManager.createDao(source, EnvironmentOptionEntity.class);
+                return dao.queryForAll().stream().sorted(ENVIRONMENT_ORDER)
+                        .map(option -> new EnvironmentOption(option.id(), option.getStableKey(), option.getCategory(),
+                                option.getName(), option.isActive(), option.getSortOrder()))
+                        .toList();
+            });
+        } catch (SQLException exception) {
+            throw new RepositoryException("Error cargando el catálogo de Entorno", exception);
+        }
+    }
+
+    public long saveEnvironmentOption(Long id, EnvironmentCategory category, String name) {
+        if (category == null) throw new IllegalArgumentException("Indica el campo de Entorno.");
+        if (id != null && id < 1) throw new IllegalArgumentException("Falta la opción que quieres editar.");
+        String normalized = required(name, "Indica el nombre de la opción.").replaceAll("\\s+", " ");
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            long savedId = databaseAccess.withOrm(source -> TransactionManager.callInTransaction(source, () -> {
+                Dao<EnvironmentOptionEntity, Long> dao = DaoManager.createDao(source, EnvironmentOptionEntity.class);
+                List<EnvironmentOptionEntity> existing = dao.queryForAll();
+                for (EnvironmentOptionEntity other : existing) {
+                    if (other.getCategory() == category && (id == null || other.id() != id)
+                            && normalized.equalsIgnoreCase(other.getName().trim().replaceAll("\\s+", " "))) {
+                        throw new IllegalArgumentException("Ya existe una opción con ese nombre en " + category.label() + ".");
+                    }
+                }
+                EnvironmentOptionEntity option;
+                if (id == null) {
+                    int last = existing.stream().filter(other -> other.getCategory() == category)
+                            .mapToInt(EnvironmentOptionEntity::getSortOrder).max().orElse(-1);
+                    if (last == Integer.MAX_VALUE) throw new IllegalArgumentException("No caben más opciones en este campo.");
+                    option = new EnvironmentOptionEntity(category, normalized, last + 1);
+                } else {
+                    option = dao.queryForId(id);
+                    if (option == null) throw new IllegalArgumentException("La opción ya no está disponible.");
+                    if (option.getCategory() != category) throw new IllegalArgumentException("No se puede cambiar el campo de una opción existente.");
+                    option.setName(normalized);
+                }
+                if (id == null) dao.create(option); else dao.update(option);
+                return option.id();
+            }));
+            invalidateEnvironmentOptions();
+            return savedId;
+        } catch (SQLException exception) {
+            throw environmentFailure(exception, "Error guardando la opción de Entorno");
+        }
+    }
+
+    public void setEnvironmentOptionActive(long id, boolean active) {
+        if (id < 1) throw new IllegalArgumentException("Falta la opción de Entorno.");
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            databaseAccess.withOrm(source -> {
+                Dao<EnvironmentOptionEntity, Long> dao = DaoManager.createDao(source, EnvironmentOptionEntity.class);
+                EnvironmentOptionEntity option = dao.queryForId(id);
+                if (option == null) throw new IllegalArgumentException("La opción ya no está disponible.");
+                option.setActive(active);
+                dao.update(option);
+                return null;
+            });
+            invalidateEnvironmentOptions();
+        } catch (SQLException exception) {
+            throw environmentFailure(exception, "Error actualizando la opción de Entorno");
+        }
+    }
+
+    public void moveEnvironmentOption(long id, int direction) {
+        if (id < 1) throw new IllegalArgumentException("Falta la opción de Entorno.");
+        if (direction != -1 && direction != 1) throw new IllegalArgumentException("Indica subir o bajar la opción.");
+        try (DataMutationCoordinator.Lease ignored = mutationCoordinator.acquireMutation()) {
+            databaseAccess.withOrm(source -> TransactionManager.callInTransaction(source, () -> {
+                Dao<EnvironmentOptionEntity, Long> dao = DaoManager.createDao(source, EnvironmentOptionEntity.class);
+                EnvironmentOptionEntity selected = dao.queryForId(id);
+                if (selected == null) throw new IllegalArgumentException("La opción ya no está disponible.");
+                List<EnvironmentOptionEntity> siblings = dao.queryForEq(EnvironmentOptionEntity.CATEGORY, selected.getCategory())
+                        .stream().sorted(ENVIRONMENT_ORDER).toList();
+                int index = -1;
+                for (int position = 0; position < siblings.size(); position++) {
+                    if (siblings.get(position).id() == id) index = position;
+                }
+                int target = index + direction;
+                if (target < 0 || target >= siblings.size()) return null;
+                // Normalize imported equal or sparse positions while swapping the selected neighbors.
+                for (int position = 0; position < siblings.size(); position++) {
+                    int destination = position == index ? target : position == target ? index : position;
+                    EnvironmentOptionEntity option = siblings.get(position);
+                    if (option.getSortOrder() != destination) {
+                        option.setSortOrder(destination);
+                        dao.update(option);
+                    }
+                }
+                return null;
+            }));
+            invalidateEnvironmentOptions();
+        } catch (SQLException exception) {
+            throw environmentFailure(exception, "Error ordenando las opciones de Entorno");
+        }
+    }
+
+    private static RuntimeException environmentFailure(SQLException exception, String message) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof IllegalArgumentException validation) return validation;
+        }
+        if (isConstraintViolation(exception)) return new IllegalArgumentException("Ya existe una opción con ese nombre en este campo.");
+        return new RepositoryException(message, exception);
     }
 
     public List<PlaceSummary> findPlaceSummaries() {

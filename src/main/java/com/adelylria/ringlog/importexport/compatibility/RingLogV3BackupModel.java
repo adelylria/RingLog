@@ -13,7 +13,8 @@ public record RingLogV3BackupModel(
         List<EventRow> events,
         List<PhotoRow> photos,
         List<WarningRow> warnings,
-        List<CaptureMethodRow> captureMethods
+        List<CaptureMethodRow> captureMethods,
+        List<EnvironmentOptionRow> environmentOptions
 ) {
 
     public RingLogV3BackupModel {
@@ -25,9 +26,20 @@ public record RingLogV3BackupModel(
         photos = List.copyOf(Objects.requireNonNull(photos, "photos"));
         warnings = List.copyOf(Objects.requireNonNull(warnings, "warnings"));
         captureMethods = List.copyOf(Objects.requireNonNull(captureMethods, "captureMethods"));
+        environmentOptions = List.copyOf(Objects.requireNonNull(environmentOptions, "environmentOptions"));
+    }
+
+    public RingLogV3BackupModel(Map<String, String> metadata, List<SpeciesRow> species,
+            List<BirdRow> birds, List<PlaceRow> places, List<EventRow> events,
+            List<PhotoRow> photos, List<WarningRow> warnings, List<CaptureMethodRow> captureMethods) {
+        this(metadata, species, birds, places, events, photos, warnings, captureMethods, List.of());
     }
 
     public record CaptureMethodRow(String stableKey, String name, boolean active) {
+    }
+
+    public record EnvironmentOptionRow(String stableKey, String category, String name,
+            boolean active, int sortOrder) {
     }
 
     public record SpeciesRow(
@@ -83,7 +95,8 @@ public record RingLogV3BackupModel(
             List<String> sourceAliases,
             String createdAt,
             String updatedAt,
-            String captureMethodStableKey
+            String captureMethodStableKey,
+            Integer temperatureCelsius
     ) {
         public EventRow {
             sourceAliases = List.copyOf(Objects.requireNonNull(sourceAliases, "sourceAliases"));

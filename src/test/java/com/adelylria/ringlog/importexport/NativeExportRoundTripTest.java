@@ -47,6 +47,143 @@ public final class NativeExportRoundTripTest {
     private NativeExportRoundTripTest() {
     }
 
+    public static void temperaturesRoundTripWithoutReinterpretingHistoricalWeather() throws Exception {
+        Path root = Files.createTempDirectory("ringlog-temperature-transports-");
+        try {
+            AppPaths source = AppPaths.forDataRoot(root.resolve("source"));
+            Database.initialize(source.databasePath().toString());
+            try (Connection connection = Database.getConnection(source.databasePath().toString());
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("INSERT INTO species(stable_key, scientific_name) VALUES('10101010-1010-4010-8010-101010101011', 'Temperature fixture')");
+                statement.executeUpdate("INSERT INTO bird(stable_key, ring_number, species_id) VALUES('20202020-2020-4020-8020-202020202021', 'TEMP-01', 1)");
+                try (PreparedStatement insert = connection.prepareStatement("""
+                        INSERT INTO bird_event(stable_key, bird_id, event_type, event_date,
+                            source_name, source_reference, thermal_sensation, temperature_celsius)
+                        VALUES(?, 1, ?, ?, 'Temperature test', ?, '31.25', ?)
+                        """)) {
+                    Integer[] temperatures = {null, -99, 0, 99};
+                    for (int index = 0; index < temperatures.length; index++) {
+                        insert.setString(1, UUID.nameUUIDFromBytes(("temperature-" + index)
+                                .getBytes(StandardCharsets.UTF_8)).toString());
+                        insert.setString(2, index == 0 ? "RINGING" : "CONTROL");
+                        insert.setString(3, "2026-01-0" + (index + 1));
+                        insert.setString(4, "TEMP:" + index);
+                        if (temperatures[index] == null) insert.setNull(5, java.sql.Types.INTEGER);
+                        else insert.setInt(5, temperatures[index]);
+                        insert.executeUpdate();
+                    }
+                }
+            }
+            Path nativeFile = new RingLogExporter(source.databasePath().toString())
+                    .exportTo(root.resolve("native-temperature")).file();
+            Path backup = new BackupExportService(source.databasePath().toString())
+                    .exportTo(root.resolve("backup-temperature")).file();
+            String weather = "SELECT event_date || '|' || COALESCE(temperature_celsius, '<null>')"
+                    + " || '|' || thermal_sensation FROM bird_event";
+            Set<String> expected = rows(source.databasePath(), weather);
+            for (Path file : List.of(nativeFile, backup)) {
+                AppPaths target = AppPaths.forDataRoot(root.resolve("restore-" + file.getFileName()));
+                try (ImportPlan plan = new ImportCoordinator().analyze(file)) {
+                    new ImportTransactionService(target.databasePath().toString(), target).execute(plan);
+                    Path changed = rewriteTemperatureWorkbook(file,
+                            root.resolve("changed-" + file.getFileName()), file.equals(nativeFile) ? Integer.toString(Database.SCHEMA_VERSION) : null, "1");
+                    try (ImportPlan changedPlan = new ImportCoordinator().analyze(changed)) {
+                        require(!plan.fingerprint().equals(changedPlan.fingerprint()),
+                                "Changing only ambient temperature must change native and v3 content fingerprints");
+                    }
+                }
+                require(expected.equals(rows(target.databasePath(), weather)),
+                        "Native and v3 restores must preserve null, negative, zero and positive temperatures separately from sensation");
+            }
+            AppPaths legacyTarget = AppPaths.forDataRoot(root.resolve("legacy-service"));
+            new LegacyImportService(legacyTarget.databasePath().toString(), legacyTarget).importWorkbook(backup);
+            Set<String> legacyWeather = rows(legacyTarget.databasePath(), weather);
+            require(expected.equals(legacyWeather),
+                    "The existing backup importer must preserve ambient temperature too: expected "
+                            + expected + ", actual " + legacyWeather);
+
+            Path preMethods = withoutCaptureMethods(nativeFile, root.resolve("pre-methods.xlsx"));
+            for (String schema : List.of("3", "4", "5", "6")) {
+                Path old = rewriteTemperatureWorkbook("6".equals(schema) ? nativeFile : preMethods,
+                        root.resolve("schema-" + schema + ".xlsx"), schema, null);
+                AppPaths target = AppPaths.forDataRoot(root.resolve("schema-" + schema));
+                try (ImportPlan plan = new ImportCoordinator().analyze(old)) {
+                    var model = plan.nativeModel();
+                    var oldSheets = new LinkedHashMap<>(model.sheets());
+                    oldSheets.put("events", model.rows("events").stream().map(row -> {
+                        Map<String, String> values = new LinkedHashMap<>(row.values());
+                        values.remove("temperature_celsius");
+                        return new com.adelylria.ringlog.importexport.nativeformat.NativeExportModel.NativeRow(values);
+                    }).toList());
+                    require(plan.fingerprint().equals(new ImportFingerprintService().fingerprint(
+                                    new com.adelylria.ringlog.importexport.nativeformat.NativeExportModel(
+                                            model.metadata(), oldSheets, model.media()))),
+                            "Adding an absent null field must preserve old native content fingerprints");
+                    new ImportTransactionService(target.databasePath().toString(), target).execute(plan);
+                }
+                require(scalarLong(target.databasePath(), "SELECT COUNT(*) FROM bird_event WHERE temperature_celsius IS NULL AND thermal_sensation = '31.25'") == 4,
+                        "Old schema " + schema + " must restore temperature as null and retain sensation");
+            }
+            Path oldBackup = rewriteTemperatureWorkbook(backup, root.resolve("old-backup.xlsx"), null, null);
+            AppPaths oldTarget = AppPaths.forDataRoot(root.resolve("old-backup"));
+            new LegacyImportService(oldTarget.databasePath().toString(), oldTarget).importWorkbook(oldBackup);
+            require(scalarLong(oldTarget.databasePath(), "SELECT COUNT(*) FROM bird_event WHERE temperature_celsius IS NULL AND thermal_sensation = '31.25'") == 4,
+                    "Released v3 backups without temperature must remain readable without guessing from sensation");
+
+            for (String invalid : List.of("-100", "100", "12.5")) {
+                for (boolean nativeFormat : List.of(true, false)) {
+                    Path invalidFile = rewriteTemperatureWorkbook(nativeFormat ? nativeFile : backup,
+                            root.resolve("invalid-" + nativeFormat + "-" + invalid + ".xlsx"),
+                            nativeFormat ? Integer.toString(Database.SCHEMA_VERSION) : null, invalid);
+                    try (ImportPlan ignored = new ImportCoordinator().analyze(invalidFile)) {
+                        throw new AssertionError("Invalid temperature must fail before import: " + invalid);
+                    } catch (ImportValidationException expectedFailure) {
+                        // The optional field still has strict integer/range semantics.
+                    }
+                }
+            }
+        } finally {
+            deleteDirectory(root);
+        }
+    }
+
+    private static Path rewriteTemperatureWorkbook(Path source, Path destination, String schema, String replacement)
+            throws Exception {
+        try (InputStream input = Files.newInputStream(source);
+             Workbook workbook = WorkbookFactory.create(input)) {
+            if (schema != null && Integer.parseInt(schema) < 8) {
+                removeEnvironmentCatalogue(workbook);
+            }
+            Sheet events = workbook.getSheet("events");
+            int column = -1;
+            for (Cell cell : events.getRow(0)) {
+                if ("temperature_celsius".equals(cell.getStringCellValue())) column = cell.getColumnIndex();
+            }
+            if (replacement == null && column >= 0) {
+                for (Row row : events) {
+                    Cell cell = row.getCell(column);
+                    if (cell != null) row.removeCell(cell);
+                }
+            } else if (replacement != null) {
+                require(column >= 0, "The temperature fixture must have a temperature column");
+                Row row = events.getRow(1);
+                Cell previous = row.getCell(column);
+                if (previous != null) row.removeCell(previous);
+                Cell cell = row.createCell(column);
+                if (schema == null) cell.setCellValue(Double.parseDouble(replacement));
+                else cell.setCellValue("@V:" + java.util.Base64.getEncoder().encodeToString(
+                        replacement.getBytes(StandardCharsets.UTF_8)));
+            }
+            if (schema != null) {
+                for (Row row : workbook.getSheet("metadata")) {
+                    if ("schema_version".equals(row.getCell(0).getStringCellValue())) replaceStringCell(row, 1, schema);
+                }
+            }
+            try (OutputStream output = Files.newOutputStream(destination)) { workbook.write(output); }
+        }
+        return destination;
+    }
+
     public static void repeatedLongTextRemainsSelfVerifyingAndLossless() throws Exception {
         Path root = Files.createTempDirectory("ringlog-native-repeated-text-");
         try {
@@ -323,8 +460,16 @@ public final class NativeExportRoundTripTest {
         try (InputStream input = Files.newInputStream(source);
              Workbook workbook = WorkbookFactory.create(input)) {
             workbook.removeSheetAt(workbook.getSheetIndex("capture_methods"));
+            removeEnvironmentCatalogue(workbook);
             Sheet events = workbook.getSheet("events");
             int column = events.getRow(0).getLastCellNum() - 1;
+            require("temperature_celsius".equals(events.getRow(0).getCell(column).getStringCellValue()),
+                    "Temperature must extend the existing event contract");
+            for (Row row : events) {
+                Cell cell = row.getCell(column);
+                if (cell != null) row.removeCell(cell);
+            }
+            column--;
             require("capture_method_stable_key".equals(events.getRow(0).getCell(column).getStringCellValue()),
                     "The method reference must extend the old event contract");
             for (Row row : events) {
@@ -342,6 +487,18 @@ public final class NativeExportRoundTripTest {
             try (OutputStream output = Files.newOutputStream(destination)) { workbook.write(output); }
         }
         return destination;
+    }
+
+    private static void removeEnvironmentCatalogue(Workbook workbook) {
+        int index = workbook.getSheetIndex("environment_options");
+        if (index >= 0) workbook.removeSheetAt(index);
+        Sheet metadata = workbook.getSheet("metadata");
+        for (int rowIndex = 1; rowIndex <= metadata.getLastRowNum(); rowIndex++) {
+            Row row = metadata.getRow(rowIndex);
+            if (row != null && "environment_options_count".equals(row.getCell(0).getStringCellValue())) {
+                metadata.removeRow(row);
+            }
+        }
     }
 
     private static Path distinctImportIdentity(Path source, Path destination) throws Exception {
@@ -709,6 +866,7 @@ public final class NativeExportRoundTripTest {
     }
 
     public static void main(String[] args) throws Exception {
+        temperaturesRoundTripWithoutReinterpretingHistoricalWeather();
         repeatedLongTextRemainsSelfVerifyingAndLossless();
         largeStreamingExportPreservesFlushedRowsOverflowTextAndBinaries();
         captureMethodsSurviveExportsAndOldExportsRemainCompatible();

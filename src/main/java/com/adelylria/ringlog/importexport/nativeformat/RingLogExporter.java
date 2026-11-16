@@ -159,6 +159,10 @@ public final class RingLogExporter {
                         SELECT stable_key, name, active
                         FROM capture_method ORDER BY stable_key
                         """));
+                sheets.put("environment_options", rows(connection, "environment_options", """
+                        SELECT stable_key, category, name, active, sort_order
+                        FROM environment_option ORDER BY stable_key
+                        """));
                 sheets.put("events", rows(connection, "events", """
                         SELECT e.stable_key, e.migration_key,
                                b.stable_key AS bird_stable_key, e.event_type, e.event_date,
@@ -171,7 +175,7 @@ public final class RingLogExporter {
                                e.wind, e.capture_type, e.is_dead, e.source_name,
                                e.source_reference, e.review_status, e.review_note,
                                e.created_at, e.updated_at,
-                               cm.stable_key AS capture_method_stable_key
+                               cm.stable_key AS capture_method_stable_key, e.temperature_celsius
                         FROM bird_event e
                         JOIN bird b ON b.id = e.bird_id
                         LEFT JOIN place p ON p.id = e.place_id

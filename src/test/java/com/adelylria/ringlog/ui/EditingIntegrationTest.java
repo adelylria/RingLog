@@ -15,6 +15,7 @@ import com.adelylria.ringlog.repository.*;
 import com.adelylria.ringlog.storage.AppPaths;
 import com.adelylria.ringlog.ui.panels.*;
 import com.adelylria.ringlog.ui.components.WrappingPanel;
+import com.adelylria.ringlog.ui.components.EnvironmentSelector;
 import com.adelylria.ringlog.update.UpdateCoordinator;
 
 public final class EditingIntegrationTest {
@@ -30,6 +31,7 @@ public final class EditingIntegrationTest {
                 sql.execute("INSERT INTO species(id,stable_key,scientific_name) VALUES(1,'s','Test species')");
                 sql.execute("INSERT INTO bird(id,stable_key,ring_number,species_id) VALUES(1,'b','TEST-01',1)");
                 sql.execute("INSERT INTO bird_event(id,stable_key,bird_id,event_type,event_date,observations) VALUES(1,'e',1,'RINGING','2026-01-01','Original')");
+                sql.execute("UPDATE bird_event SET clouds='SI', rain='No', thermal_sensation='23.8', wind='Ligero', temperature_celsius=-5 WHERE id=1");
             }
             var events = new BirdEventRepository(paths);
             var before = events.findDetail(1).orElseThrow();
@@ -75,6 +77,33 @@ public final class EditingIntegrationTest {
                 require(find(form[0],"weightField",JTextField.class).isEnabled(),"Fields are restored after Save");
             });
             require(events.findDetail(1).orElseThrow().weight()==24.5,"Decimal comma keeps the same stored units");
+            var historical = events.findDetail(1).orElseThrow();
+            require("SI".equals(historical.clouds()) && "No".equals(historical.rain())
+                    && "23.8".equals(historical.thermalSensation()) && "Ligero".equals(historical.wind())
+                    && Integer.valueOf(-5).equals(historical.temperatureCelsius()),
+                    "Saving unrelated edits must preserve all historical environment values and degrees");
+            saved.set(0);
+            SwingUtilities.invokeAndWait(() -> form[0].edit(historical));
+            await(() -> find(form[0],"cloudsField",EnvironmentSelector.class).getItemCount() >= 5,
+                    "Current environment options load alongside the historical value");
+            SwingUtilities.invokeAndWait(() -> {
+                require(!form[0].hasUnsavedChanges(), "Reloading a historical environment must start clean");
+                require(find(form[0],"cloudsField",EnvironmentSelector.class).selectValue("25-75%"), "Replace old clouds");
+                require(find(form[0],"rainField",EnvironmentSelector.class).selectValue("Débil"), "Replace old rain");
+                require(find(form[0],"thermalField",EnvironmentSelector.class).selectValue("Templado"), "Replace old thermal sensation");
+                require(find(form[0],"windField",EnvironmentSelector.class).selectValue("Moderado"), "Replace old wind");
+                find(form[0],"saveEventButton",JButton.class).doClick();
+            });
+            await(() -> saved.get()==1,"Environment changes save to the same historical record");
+            var modern = events.findDetail(1).orElseThrow();
+            require("25-75%".equals(modern.clouds()) && "Débil".equals(modern.rain())
+                    && "Templado".equals(modern.thermalSensation()) && "Moderado".equals(modern.wind())
+                    && Integer.valueOf(-5).equals(modern.temperatureCelsius()) && modern.weight()==24.5,
+                    "New choices replace only the selected environment text, keeping temperature and other fields");
+            try (var db = Database.getConnection(paths.databasePath().toString());
+                 var sql=db.createStatement(); var count=sql.executeQuery("SELECT count(*) FROM bird_event")) {
+                require(count.next() && count.getInt(1)==1,"Changing old environment choices must not duplicate the event");
+            }
 
             PlacePanel places = new PlacePanel(catalog);
             SpeciesPanel species = new SpeciesPanel(catalog);

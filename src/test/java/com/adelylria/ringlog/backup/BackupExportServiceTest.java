@@ -723,7 +723,7 @@ public final class BackupExportServiceTest {
                        e.ringer_initials, e.status, e.reproductive_status,
                        e.moult_intensity, e.moult_extension, e.bird_condition,
                        e.return_status, e.wing, e.p3, e.torso, e.weight,
-                       e.observations, e.clouds, e.rain, e.thermal_sensation,
+                       e.observations, e.clouds, e.rain, e.thermal_sensation, e.temperature_celsius,
                        e.wind, e.capture_type, e.is_dead, e.source_name,
                        e.source_reference, e.created_at, e.updated_at
                 FROM bird_event e

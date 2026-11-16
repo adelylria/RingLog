@@ -73,14 +73,15 @@ final class ExcelRecordReportWriter {
             "Músculo",
             "Nubes",
             "Lluvia",
-            "Sensación térmica (°C)",
+            "Temperatura (°C)",
+            "Sensación térmica",
             "Viento",
             "Método de captura"
     );
     private static final int[] BASE_COLUMN_WIDTHS = {
             14, 9, 17, 17, 29, 17, 28, 26, 23, 21, 31, 14, 14, 13,
             13, 15, 13, 17, 17, 14, 18, 14, 13, 22, 12, 12, 12, 12,
-            10, 11, 13, 11, 20, 13, 25
+            10, 11, 13, 11, 18, 20, 13, 25
     };
 
     void write(
@@ -390,6 +391,7 @@ final class ExcelRecordReportWriter {
         writeInteger(row, column++, record.muscleScore(), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.clouds()), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.rain()), alternate, styles);
+        writeInteger(row, column++, record.temperatureCelsius(), alternate, styles);
         writeMaybeNumber(row, column++, record.thermalSensation(), alternate, styles);
         writeText(row, column++, RecordReportText.coded(record.wind()), alternate, styles);
         writeText(row, column++, record.captureMethod(), alternate, styles);

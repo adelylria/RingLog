@@ -252,6 +252,10 @@ public final class ImportTransactionService {
         Map<String, Long> birds = restoreNativeBirds(anchor, model, species);
         Map<String, Long> places = restoreNativePlaces(anchor, model);
         Map<String, Long> captureMethods = restoreNativeCaptureMethods(anchor, model);
+        EnvironmentCatalogRestore.restore(anchor, model.rows("environment_options").stream()
+                .map(row -> new RingLogV3BackupModel.EnvironmentOptionRow(row.value("stable_key"),
+                        row.value("category"), row.value("name"), "1".equals(row.value("active")),
+                        Integer.parseInt(row.value("sort_order")))).toList());
         Map<String, Long> events = restoreNativeEvents(anchor, model, birds, places, captureMethods);
         Map<String, Long> batches = restoreNativeBatches(anchor, model);
         restoreNativeMetadata(anchor, model, batches);
@@ -406,7 +410,8 @@ public final class ImportTransactionService {
                     "moult_intensity", "moult_extension", "bird_condition", "return_status",
                     "wing", "p3", "torso", "weight", "observations", "clouds", "rain",
                     "thermal_sensation", "wind", "capture_type", "is_dead", "source_name",
-                    "source_reference", "review_status", "review_note", "created_at", "updated_at");
+                    "source_reference", "review_status", "review_note", "created_at", "updated_at",
+                    "temperature_celsius");
             insertOrVerify(anchor, "bird_event", "stable_key = ?",
                     new String[]{row.value("stable_key")}, values);
             result.put(row.value("stable_key"),
@@ -731,6 +736,7 @@ public final class ImportTransactionService {
         Map<String, Long> birdIds = restoreBackupBirds(source, model, speciesIds);
         Map<String, Long> placeIds = restoreBackupPlaces(source, model);
         Map<String, Long> captureMethodIds = restoreBackupCaptureMethods(batchDao, model);
+        EnvironmentCatalogRestore.restore(batchDao, model.environmentOptions());
         Map<String, Long> eventIds = restoreBackupEvents(
                 source, model, birdIds, placeIds, captureMethodIds
         );
@@ -910,6 +916,7 @@ public final class ImportTransactionService {
         entity.setClouds(row.clouds());
         entity.setRain(row.rain());
         entity.setThermalSensation(row.thermalSensation());
+        entity.setTemperatureCelsius(row.temperatureCelsius());
         entity.setWind(row.wind());
         entity.setCaptureType(row.captureType());
         entity.setDead(row.dead());

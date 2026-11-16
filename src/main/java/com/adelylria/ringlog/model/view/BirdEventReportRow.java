@@ -155,6 +155,10 @@ public record BirdEventReportRow(
         return detail.thermalSensation();
     }
 
+    public Integer temperatureCelsius() {
+        return detail.temperatureCelsius();
+    }
+
     public String wind() {
         return detail.wind();
     }

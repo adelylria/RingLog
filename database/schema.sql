@@ -1,6 +1,6 @@
 PRAGMA foreign_keys = ON;
 
--- RingLog schema v6. Stable identities are supplied by Java, never SQLite.
+-- RingLog schema v8. Stable identities are supplied by Java, never SQLite.
 CREATE TABLE species (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
@@ -51,6 +51,36 @@ INSERT INTO capture_method(stable_key, name) VALUES
     ('39d6ec44-2b19-4b49-a69c-d2af0aa31f8d', 'FILATS'),
     ('9145f480-ef6b-4392-a33b-48d4e9bf5b11', 'RED JAPONESA');
 
+CREATE TABLE environment_option (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
+    category TEXT NOT NULL CHECK (category IN ('CLOUDS', 'RAIN', 'THERMAL_SENSATION', 'WIND')),
+    name TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(name)) > 0),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    sort_order INTEGER NOT NULL DEFAULT 0 CHECK (typeof(sort_order) = 'integer' AND sort_order >= 0),
+    UNIQUE (category, name)
+);
+
+INSERT INTO environment_option(stable_key, category, name, sort_order) VALUES
+    ('ed8a9136-748e-4d64-a748-000000000001', 'CLOUDS', '0%', 0),
+    ('ed8a9136-748e-4d64-a748-000000000002', 'CLOUDS', '1-25%', 1),
+    ('ed8a9136-748e-4d64-a748-000000000003', 'CLOUDS', '25-75%', 2),
+    ('ed8a9136-748e-4d64-a748-000000000004', 'CLOUDS', '75-100%', 3),
+    ('ed8a9136-748e-4d64-a748-000000000005', 'RAIN', 'Nula', 0),
+    ('ed8a9136-748e-4d64-a748-000000000006', 'RAIN', 'Débil', 1),
+    ('ed8a9136-748e-4d64-a748-000000000007', 'RAIN', 'Moderada', 2),
+    ('ed8a9136-748e-4d64-a748-000000000008', 'RAIN', 'Fuerte', 3),
+    ('ed8a9136-748e-4d64-a748-000000000009', 'THERMAL_SENSATION', 'Mucho frío', 0),
+    ('ed8a9136-748e-4d64-a748-000000000010', 'THERMAL_SENSATION', 'Frío', 1),
+    ('ed8a9136-748e-4d64-a748-000000000011', 'THERMAL_SENSATION', 'Templado', 2),
+    ('ed8a9136-748e-4d64-a748-000000000012', 'THERMAL_SENSATION', 'Calor', 3),
+    ('ed8a9136-748e-4d64-a748-000000000013', 'THERMAL_SENSATION', 'Mucho calor', 4),
+    ('ed8a9136-748e-4d64-a748-000000000014', 'WIND', 'Nulo', 0),
+    ('ed8a9136-748e-4d64-a748-000000000015', 'WIND', 'Débil', 1),
+    ('ed8a9136-748e-4d64-a748-000000000016', 'WIND', 'Moderado', 2),
+    ('ed8a9136-748e-4d64-a748-000000000017', 'WIND', 'Fuerte', 3),
+    ('ed8a9136-748e-4d64-a748-000000000018', 'WIND', 'Muy fuerte', 4);
+
 CREATE TABLE bird_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stable_key TEXT NOT NULL CHECK (length(trim(stable_key)) > 0),
@@ -80,6 +110,8 @@ CREATE TABLE bird_event (
     clouds TEXT,
     rain TEXT,
     thermal_sensation TEXT,
+    temperature_celsius INTEGER CHECK (temperature_celsius IS NULL OR
+        (typeof(temperature_celsius) = 'integer' AND temperature_celsius BETWEEN -99 AND 99)),
     wind TEXT,
     capture_type TEXT,
     capture_method_id INTEGER,
@@ -236,6 +268,8 @@ CREATE UNIQUE INDEX idx_species_stable_key ON species(stable_key);
 CREATE UNIQUE INDEX idx_bird_stable_key ON bird(stable_key);
 CREATE UNIQUE INDEX idx_place_stable_key ON place(stable_key);
 CREATE UNIQUE INDEX idx_capture_method_stable_key ON capture_method(stable_key);
+CREATE UNIQUE INDEX idx_environment_option_stable_key ON environment_option(stable_key);
+CREATE INDEX idx_environment_option_category_order ON environment_option(category, sort_order, id);
 CREATE UNIQUE INDEX idx_event_stable_key ON bird_event(stable_key);
 CREATE UNIQUE INDEX idx_photo_stable_key ON event_photo(stable_key);
 CREATE UNIQUE INDEX idx_event_migration_key ON bird_event(migration_key) WHERE migration_key IS NOT NULL;
@@ -300,4 +334,4 @@ BEGIN
     UPDATE bird_event SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 8;

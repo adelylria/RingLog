@@ -7,8 +7,11 @@ consultar el archivo como un diario, no como una tabla.
 ## Funciones principales
 
 - Creación, consulta y edición de registros de anillamiento, control y recuperación.
-- Catálogos reutilizables de aves, especies, lugares y métodos de captura.
-- Catálogo de métodos de captura para añadir, renombrar, archivar y reactivar desde su propia sección.
+- Regreso al archivo o al Diario conservando los filtros, los bloques cargados y la posición tras consultar o editar una ficha.
+- Catálogos reutilizables de aves, especies, lugares, métodos de captura y entorno.
+- Catálogos de métodos de captura y entorno para añadir, renombrar, desactivar y reactivar opciones desde sus propias secciones.
+- Desplegables de nubes, lluvia, sensación térmica y viento, con opciones iniciales en castellano y orden personalizable.
+- Temperatura ambiental opcional, separada de la sensación térmica y conservada en copias e informes.
 - Filtros por texto, tipo, especie, lugar y fecha, con rangos inclusivos de días, meses y años.
 - Informes de los registros filtrados en XLSX y PDF.
 - Importación del formato normalizado RingLog Legacy Migrator v5/v5.2.

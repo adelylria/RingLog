@@ -55,6 +55,7 @@ public final class RingLogExportReader {
             Map<String, List<NativeRow>> sheets = new LinkedHashMap<>();
             boolean legacySchema = Set.of("3", "4", "5")
                     .contains(profile.metadata().get("schema_version"));
+            boolean legacyEnvironment = !"8".equals(profile.metadata().get("schema_version"));
             int totalRows = 0;
             for (Map.Entry<String, List<String>> definition : NativeSchema.SHEETS.entrySet()) {
                 if (legacySchema && "capture_methods".equals(definition.getKey())
@@ -62,9 +63,14 @@ public final class RingLogExportReader {
                     sheets.put(definition.getKey(), List.of());
                     continue;
                 }
+                if (legacyEnvironment && "environment_options".equals(definition.getKey())
+                        && workbook.getSheet(definition.getKey()) == null) {
+                    sheets.put(definition.getKey(), List.of());
+                    continue;
+                }
                 List<NativeRow> rows = readRows(
                         workbook, definition.getKey(), definition.getValue(), textStore,
-                        legacySchema
+                        legacySchema, !Set.of("7", "8").contains(profile.metadata().get("schema_version"))
                 );
                 totalRows += rows.size();
                 if (totalRows > MAX_DATA_ROWS) {
@@ -98,13 +104,17 @@ public final class RingLogExportReader {
             String sheetName,
             List<String> columns,
             Map<String, String> textStore,
-            boolean legacySchema
+            boolean legacySchema,
+            boolean legacyTemperature
     ) {
         Sheet sheet = requiredSheet(workbook, sheetName);
         List<String> readableColumns = columns;
         if ("places".equals(sheetName)
                 && headerMatches(sheet, NativeSchema.LEGACY_PLACE_COLUMNS)) {
             readableColumns = NativeSchema.LEGACY_PLACE_COLUMNS;
+        } else if (legacyTemperature && "events".equals(sheetName)
+                && headerMatches(sheet, NativeSchema.PRE_TEMPERATURE_EVENT_COLUMNS)) {
+            readableColumns = NativeSchema.PRE_TEMPERATURE_EVENT_COLUMNS;
         } else if (legacySchema && "events".equals(sheetName)
                 && headerMatches(sheet, NativeSchema.LEGACY_EVENT_COLUMNS)) {
             readableColumns = NativeSchema.LEGACY_EVENT_COLUMNS;
@@ -228,7 +238,7 @@ public final class RingLogExportReader {
 
     private static void validate(NativeExportModel model, boolean packaged) {
         UUID.fromString(requiredMetadata(model, "export_id"));
-        if (!Set.of("3", "4", "5", "6").contains(requiredMetadata(model, "schema_version"))) {
+        if (!Set.of("3", "4", "5", "6", "7", "8").contains(requiredMetadata(model, "schema_version"))) {
             throw new IllegalArgumentException(
                     "El export no corresponde a un schema RingLog compatible."
             );
@@ -247,7 +257,35 @@ public final class RingLogExportReader {
                 throw new IllegalArgumentException("Catálogo de métodos de captura no válido.");
             }
         }
+        unique(model.rows("environment_options"), "stable_key", "environment options");
+        Set<String> environmentNames = new HashSet<>();
+        for (NativeRow option : model.rows("environment_options")) {
+            String category = required(option, "category");
+            com.adelylria.ringlog.model.EnvironmentCategory.valueOf(category);
+            String name = required(option, "name").trim().replaceAll("\\s+", " ");
+            if (name.isBlank()
+                    || !environmentNames.add(category + '\u0000' + name.toUpperCase(java.util.Locale.ROOT))
+                    || !Set.of("0", "1").contains(required(option, "active"))) {
+                throw new IllegalArgumentException("Catálogo de entorno no válido.");
+            }
+            int order = Integer.parseInt(required(option, "sort_order"));
+            if (order < 0) throw new IllegalArgumentException("Orden de opción de entorno no válido.");
+        }
         Set<String> events = unique(model.rows("events"), "stable_key", "events");
+        for (NativeRow event : model.rows("events")) {
+            String temperature = event.value("temperature_celsius");
+            if (temperature != null) {
+                int value;
+                try {
+                    value = Integer.parseInt(temperature);
+                } catch (NumberFormatException exception) {
+                    throw new IllegalArgumentException("La temperatura debe ser un entero entre -99 y 99.", exception);
+                }
+                if (value < -99 || value > 99) {
+                    throw new IllegalArgumentException("La temperatura debe ser un entero entre -99 y 99.");
+                }
+            }
+        }
         unique(model.rows("photos"), "stable_key", "photos");
         Set<String> batches = unique(model.rows("import_batches"), "stable_key", "batches");
         unique(model.rows("event_source_aliases"), "stable_key", "aliases");

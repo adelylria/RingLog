@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import javax.swing.Box;
 import javax.swing.AbstractAction;
@@ -40,8 +41,11 @@ import com.adelylria.ringlog.ui.theme.UiKit;
 
 public class CaptureDetailPanel extends JPanel {
 
+    private static final Pattern NUMERIC_TEXT = Pattern.compile(
+            "[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)(?:[eE][+-]?[0-9]+)?");
     private final BirdEventRepository eventRepository;
     private final Runnable onBack;
+    private String returnDestination = "registros";
     private final Consumer<BirdEventDetail> onEdit;
     private final boolean canEdit;
     private final Path mapCacheDirectory;
@@ -161,6 +165,10 @@ public class CaptureDetailPanel extends JPanel {
         }.execute();
     }
 
+    public void setReturnDestination(String destination) {
+        returnDestination = java.util.Objects.requireNonNull(destination);
+    }
+
     private void render(
             BirdEventDetail detail,
             List<BirdEventTimelineItem> history
@@ -168,7 +176,8 @@ public class CaptureDetailPanel extends JPanel {
         if (photoGallery != null) photoGallery.dispose();
         content.removeAll();
 
-        JButton back = UiKit.secondaryButton("← Volver a registros");
+        JButton back = UiKit.secondaryButton("← Volver a " + returnDestination);
+        back.setName("backCaptureDetailButton");
         back.addActionListener(event -> onBack.run());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         actions.setOpaque(false);
@@ -299,6 +308,7 @@ public class CaptureDetailPanel extends JPanel {
                 withTextUnit(detail.thermalSensation(), "°C")
         );
         weather.addRow("Viento", UiKit.friendlyCode(detail.wind()));
+        weather.addRow("Temperatura ambiental", withUnit(detail.temperatureCelsius(), "°C"));
         weather.addRow(
                 "Coordenadas",
                 coordinates(detail.latitude(), detail.longitude())
@@ -403,7 +413,8 @@ public class CaptureDetailPanel extends JPanel {
 
     private void renderMissing() {
         content.removeAll();
-        JButton back = UiKit.secondaryButton("← Volver a registros");
+        JButton back = UiKit.secondaryButton("← Volver a " + returnDestination);
+        back.setName("backCaptureDetailButton");
         back.addActionListener(event -> onBack.run());
         content.add(new PageHeader(
                 "ENTRADA DE CAMPO",
@@ -439,7 +450,8 @@ public class CaptureDetailPanel extends JPanel {
 
     private static String withTextUnit(String value, String unit) {
         String text = UiKit.display(value);
-        return "—".equals(text) || text.endsWith(unit) ? text : text + " " + unit;
+        String numericText = text.trim();
+        return NUMERIC_TEXT.matcher(numericText).matches() ? numericText + " " + unit : text;
     }
 
     private static String displayLocation(BirdEventDetail detail) {

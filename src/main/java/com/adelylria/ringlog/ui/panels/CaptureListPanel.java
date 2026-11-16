@@ -1,7 +1,11 @@
 package com.adelylria.ringlog.ui.panels;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.FlowLayout;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +39,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingWorker;
+import javax.swing.SwingUtilities;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.Timer;
 import javax.swing.event.DocumentEvent;
@@ -50,6 +55,7 @@ import com.adelylria.ringlog.report.RecordReportResult;
 import com.adelylria.ringlog.report.RecordReportSelection;
 import com.adelylria.ringlog.report.RecordReportService;
 import com.adelylria.ringlog.ui.components.CalendarDatePicker;
+import com.adelylria.ringlog.ui.components.BirdEventCard;
 import com.adelylria.ringlog.ui.components.DatePeriodSelector;
 import com.adelylria.ringlog.ui.components.PageHeader;
 import com.adelylria.ringlog.ui.components.NavigationIcon;
@@ -95,6 +101,7 @@ public class CaptureListPanel extends JPanel {
     private final JLabel rangeValidation;
     private final Timer filterDelay;
     private final TimelineView timelineView;
+    private final JScrollPane archiveScroll;
     private final JLabel statusLabel;
     private final JButton showMoreButton;
     private final JButton showAllButton;
@@ -117,6 +124,14 @@ public class CaptureListPanel extends JPanel {
     private boolean loading;
     private boolean filterPending;
     private boolean rangesInitialized;
+    private boolean archiveLoaded;
+    private ListPosition returnPosition;
+    private ListPosition pendingPosition;
+    private boolean pendingCardsChanged;
+    private int positionGeneration;
+
+    private record ListPosition(FilterSelection selection, int visibleLimit, Point viewport, int viewportWidth,
+            long anchorId, long nextId, long previousId, int anchorOffset) { }
 
     public CaptureListPanel(
             BirdEventRepository eventRepository,
@@ -143,7 +158,10 @@ public class CaptureListPanel extends JPanel {
             boolean canCreateEvent
     ) {
         this.eventRepository = eventRepository;
-        this.onOpenEvent = onOpenEvent;
+        this.onOpenEvent = id -> {
+            rememberListPosition();
+            onOpenEvent.accept(id);
+        };
         this.onNewEvent = onNewEvent;
         this.canCreateEvent = canCreateEvent;
         this.searchField = new JTextField(20);
@@ -194,6 +212,8 @@ public class CaptureListPanel extends JPanel {
             this.typeCombo.addItem(type);
         }
         this.timelineView = new TimelineView();
+        this.archiveScroll = UiKit.scrollPane(new JPanel());
+        this.archiveScroll.setName("captureArchiveScroll");
         this.statusLabel = UiKit.muted("Cargando…");
         this.statusLabel.setName("recordFilterStatus");
         this.showMoreButton = UiKit.secondaryButton("Mostrar más");
@@ -258,8 +278,8 @@ public class CaptureListPanel extends JPanel {
         body.add(archive, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
 
-        JScrollPane scroll = UiKit.scrollPane(page);
-        add(scroll, BorderLayout.CENTER);
+        archiveScroll.setViewportView(page);
+        add(archiveScroll, BorderLayout.CENTER);
 
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -558,13 +578,116 @@ public class CaptureListPanel extends JPanel {
     }
 
     public void refresh() {
+        returnPosition = null;
+        pendingPosition = null;
+        positionGeneration++;
+        refresh(false);
+    }
+
+    /** Capture the current list before opening a detail; the widgets themselves retain all filters. */
+    public void rememberListPosition() {
+        returnPosition = canRememberPosition() ? capturePosition() : null;
+    }
+
+    private boolean canRememberPosition() {
+        return !loading && !filterPending && renderedItems != null && lastSelection != null
+                && lastSelection.equals(selection());
+    }
+
+    /** A read-only visit reuses the existing cards; saved edits reload without resetting the list. */
+    public void resumeAfterDetail(boolean dataChanged) {
+        ListPosition position = returnPosition;
+        if (position != null && !position.selection().equals(selection())) position = null;
+        if (position == null && canRememberPosition()) position = capturePosition();
+        pendingPosition = position;
+        pendingCardsChanged = false;
+        positionGeneration++;
+        if (dataChanged || !archiveLoaded && !loading) {
+            refresh(true);
+        } else if (!loading && !filterPending) {
+            restorePosition();
+        }
+    }
+
+    private ListPosition capturePosition() {
+        Point viewport = archiveScroll.getViewport().getViewPosition();
+        List<BirdEventCard> cards = eventCards();
+        for (int index = 0; renderedItems != null && index < Math.min(cards.size(), renderedItems.size()); index++) {
+            BirdEventCard card = cards.get(index);
+            Rectangle bounds = SwingUtilities.convertRectangle(card.getParent(), card.getBounds(),
+                    archiveScroll.getViewport().getView());
+            if (bounds.y + bounds.height > viewport.y) {
+                return new ListPosition(selection(), visibleLimit, new Point(viewport), archiveScroll.getViewport().getExtentSize().width,
+                        renderedItems.get(index).id(),
+                        index + 1 < renderedItems.size() ? renderedItems.get(index + 1).id() : -1,
+                        index > 0 ? renderedItems.get(index - 1).id() : -1, viewport.y - bounds.y);
+            }
+        }
+        return new ListPosition(selection(), visibleLimit, new Point(viewport), archiveScroll.getViewport().getExtentSize().width,
+                -1, -1, -1, 0);
+    }
+
+    private List<BirdEventCard> eventCards() {
+        List<BirdEventCard> cards = new ArrayList<>();
+        collectEventCards(timelineView, cards);
+        return cards;
+    }
+
+    private static void collectEventCards(Container parent, List<BirdEventCard> cards) {
+        for (Component component : parent.getComponents()) {
+            if (component instanceof BirdEventCard card) cards.add(card);
+            else if (component instanceof Container container) collectEventCards(container, cards);
+        }
+    }
+
+    private void restorePosition() {
+        ListPosition position = pendingPosition;
+        if (position == null) return;
+        int generation = positionGeneration;
+        // CardLayout and the asynchronous result both need a layout pass before viewport clamping.
+        SwingUtilities.invokeLater(() -> SwingUtilities.invokeLater(() -> {
+            if (generation != positionGeneration || pendingPosition != position || loading || filterPending) return;
+            if (!position.selection().equals(selection())) { pendingPosition = null; return; }
+            Component view = archiveScroll.getViewport().getView();
+            int y = position.viewport().y;
+            if (pendingCardsChanged || position.viewportWidth() != archiveScroll.getViewport().getExtentSize().width) {
+                archiveScroll.doLayout();
+                archiveScroll.getViewport().doLayout();
+                layoutForPosition((Container) view);
+                List<BirdEventCard> cards = eventCards();
+                for (long id : new long[]{position.anchorId(), position.nextId(), position.previousId()}) {
+                    int index = -1;
+                    for (int item = 0; renderedItems != null && item < renderedItems.size(); item++) {
+                        if (renderedItems.get(item).id() == id) { index = item; break; }
+                    }
+                    if (index >= 0 && index < cards.size()) {
+                        BirdEventCard card = cards.get(index);
+                        y = SwingUtilities.convertRectangle(card.getParent(), card.getBounds(), view).y
+                                + position.anchorOffset();
+                        break;
+                    }
+                }
+            }
+            int maximum = Math.max(0, view.getHeight() - archiveScroll.getViewport().getExtentSize().height);
+            archiveScroll.getViewport().setViewPosition(new Point(position.viewport().x,
+                    Math.max(0, Math.min(y, maximum))));
+            pendingPosition = null;
+        }));
+    }
+
+    private static void layoutForPosition(Container parent) {
+        parent.doLayout();
+        for (Component child : parent.getComponents()) if (child instanceof Container container) layoutForPosition(container);
+    }
+
+    private void refresh(boolean preservePosition) {
         int generation = ++loadGeneration;
         loading = true;
         invalidateFilter("Cargando…");
         showMoreButton.setVisible(false);
         showAllButton.setVisible(false);
         exportButton.setEnabled(false);
-        visibleLimit = PAGE_SIZE;
+        if (!preservePosition) visibleLimit = PAGE_SIZE;
 
         new SwingWorker<ArchiveData, Void>() {
             @Override
@@ -577,34 +700,42 @@ public class CaptureListPanel extends JPanel {
                 if (generation != loadGeneration) return;
                 try {
                     archiveData = get();
+                    archiveLoaded = true;
                     lastSelection = null;
                     loading = false;
-                    updateFilterOptions();
-                    visibleLimit = hasActiveFilters()
-                            ? FILTERED_PAGE_SIZE
-                            : PAGE_SIZE;
+                    updateFilterOptions(preservePosition);
+                    if (!preservePosition) visibleLimit = hasActiveFilters() ? FILTERED_PAGE_SIZE : PAGE_SIZE;
+                    else if (pendingPosition != null && pendingPosition.selection().equals(selection())) {
+                        visibleLimit = pendingPosition.visibleLimit();
+                    }
                     applyFilters();
                 } catch (InterruptedException | ExecutionException exception) {
                     if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
                     loading = false;
-                    archiveData = ArchiveData.empty();
-                    filterResult = List.of();
-                    lastSelection = null;
+                    archiveLoaded = false;
                     setFilterPending(false);
                     statusLabel.setText("No se han podido cargar los registros");
-                    timelineView.setItems(List.of(), onOpenEvent, 0);
-                    renderedItems = null;
+                    if (preservePosition) {
+                        // Keep the user's visible context while allowing the next visit to retry the read.
+                        restorePosition();
+                    } else {
+                        archiveData = ArchiveData.empty();
+                        filterResult = List.of();
+                        lastSelection = null;
+                        timelineView.setItems(List.of(), onOpenEvent, 0);
+                        renderedItems = null;
+                    }
                     exportButton.setEnabled(false);
                 }
             }
         }.execute();
     }
 
-    private void updateFilterOptions() {
+    private void updateFilterOptions(boolean preserveSelection) {
         String selectedSpecies = (String) speciesCombo.getSelectedItem();
         String selectedPlace = (String) placeCombo.getSelectedItem();
-        List<String> species = archiveData.species();
-        List<String> places = archiveData.places();
+        List<String> species = retainedOption(archiveData.species(), selectedSpecies, ALL_SPECIES, preserveSelection);
+        List<String> places = retainedOption(archiveData.places(), selectedPlace, ALL_PLACES, preserveSelection);
 
         updatingFilterOptions = true;
         try {
@@ -621,10 +752,17 @@ public class CaptureListPanel extends JPanel {
             dayPicker.setAvailableDates(archiveData.days());
             endDayPicker.setAvailableDates(archiveData.days());
             if (!rangesInitialized) resetRanges();
-            updateDatePeriodOptions();
+            updateDatePeriodOptions(preserveSelection);
         } finally {
             updatingFilterOptions = false;
         }
+    }
+
+    private static List<String> retainedOption(List<String> options, String selected, String all, boolean preserve) {
+        if (!preserve || selected == null || all.equals(selected) || options.contains(selected)) return options;
+        List<String> retained = new ArrayList<>(options);
+        retained.add(selected);
+        return retained;
     }
 
     private void dateModeChanged() {
@@ -642,6 +780,10 @@ public class CaptureListPanel extends JPanel {
     }
 
     private void updateDatePeriodOptions() {
+        updateDatePeriodOptions(false);
+    }
+
+    private void updateDatePeriodOptions(boolean preserveSelection) {
         String mode = (String) dateModeCombo.getSelectedItem();
         DateFilterOption selected = (DateFilterOption) datePeriodCombo
                 .getSelectedItem();
@@ -676,6 +818,11 @@ public class CaptureListPanel extends JPanel {
         }
 
         List<DateFilterOption> options = DATE_BY_MONTH.equals(mode) ? archiveData.months() : archiveData.years();
+        if (preserveSelection && selected != null && !selected.key().isBlank()
+                && options.stream().noneMatch(option -> selected.key().equals(option.key()))) {
+            options = new ArrayList<>(options);
+            options.add(selected);
+        }
         datePeriodCombo.setModel(new DefaultComboBoxModel<>(options.toArray(DateFilterOption[]::new)));
         datePeriodCombo.setEnabled(!options.isEmpty());
         if (selected != null) options.stream().filter(option -> selected.key().equals(option.key()))
@@ -707,12 +854,18 @@ public class CaptureListPanel extends JPanel {
         if (updatingFilterOptions) {
             return;
         }
+        returnPosition = null;
+        pendingPosition = null;
+        positionGeneration++;
         visibleLimit = hasActiveFilters() ? FILTERED_PAGE_SIZE : PAGE_SIZE;
         invalidateFilter(loading ? "Cargando…" : "Filtrando…");
         if (!loading) filterDelay.restart();
     }
 
     private void clearFilters() {
+        returnPosition = null;
+        pendingPosition = null;
+        positionGeneration++;
         updatingFilterOptions = true;
         try {
             searchField.setText("");
@@ -820,6 +973,7 @@ public class CaptureListPanel extends JPanel {
                 ? "No hay registros con estos filtros" : null;
         boolean sameCards = visible.equals(renderedItems)
                 && java.util.Objects.equals(emptyMessage, renderedEmptyMessage);
+        if (!sameCards && pendingPosition != null) pendingCardsChanged = true;
 
         if (!sameCards && emptyMessage != null) {
             timelineView.setItems(
@@ -849,6 +1003,7 @@ public class CaptureListPanel extends JPanel {
         showAllButton.setVisible(remaining > PAGE_SIZE);
         exportButton.setEnabled(!exportInProgress && !filtered.isEmpty());
         setFilterPending(false);
+        restorePosition();
         if (remaining > 0) {
             int nextPage = Math.min(PAGE_SIZE, remaining);
             showMoreButton.setText(

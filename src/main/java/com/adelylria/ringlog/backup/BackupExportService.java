@@ -86,7 +86,7 @@ public final class BackupExportService {
             "bird_condition", "return_status", "wing", "p3", "torso", "weight",
             "observations", "clouds", "rain", "thermal_sensation", "wind",
             "capture_type", "is_dead", "source_name", "source_reference",
-            "source_aliases", "created_at", "updated_at", "capture_method_stable_key"
+            "source_aliases", "created_at", "updated_at", "capture_method_stable_key", "temperature_celsius"
     };
     private static final String[] CAPTURE_METHOD_HEADERS = {"stable_key", "name", "active"};
     private static final String[] PHOTO_HEADERS = {
@@ -212,6 +212,7 @@ public final class BackupExportService {
                 List<Object[]> birds = readBirds(connection);
                 List<Object[]> places = readPlaces(connection);
                 List<Object[]> captureMethods = readCaptureMethods(connection);
+                List<Object[]> environmentOptions = readEnvironmentOptions(connection);
                 EventExport events = readEvents(connection);
                 List<PhotoExport> photos = readPhotos(
                         connection,
@@ -219,7 +220,7 @@ public final class BackupExportService {
                         events.references()
                 );
                 connection.rollback();
-                return new BackupData(species, birds, places, events.rows(), photos, captureMethods);
+                return new BackupData(species, birds, places, events.rows(), photos, captureMethods, environmentOptions);
             } catch (SQLException | IOException | BackupExportException exception) {
                 rollback(connection, exception);
                 throw exception;
@@ -374,11 +375,27 @@ public final class BackupExportService {
                         null,
                         result.getString("created_at"),
                         result.getString("updated_at"),
-                        result.getString("capture_method_stable_key")
+                        result.getString("capture_method_stable_key"),
+                        nullableInteger(result, "temperature_celsius")
                 });
             }
         }
         return new EventExport(List.copyOf(rows), Map.copyOf(keys), Map.copyOf(references));
+    }
+
+    private List<Object[]> readEnvironmentOptions(Connection connection) throws SQLException {
+        List<Object[]> rows = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("""
+                     SELECT stable_key, category, name, active, sort_order
+                     FROM environment_option ORDER BY stable_key
+                     """)) {
+            while (result.next()) {
+                rows.add(new Object[]{result.getString(1), result.getString(2), result.getString(3),
+                        result.getInt(4), result.getInt(5)});
+            }
+        }
+        return List.copyOf(rows);
     }
 
     private List<PhotoExport> readPhotos(
@@ -499,6 +516,7 @@ public final class BackupExportService {
             metadata.put("places_count", Integer.toString(data.places().size()));
             metadata.put("events_count", Integer.toString(data.events().size()));
             metadata.put("capture_methods_count", Integer.toString(data.captureMethods().size()));
+            metadata.put("environment_options_count", Integer.toString(data.environmentOptions().size()));
             metadata.put("photos_count", Integer.toString(data.photos().size()));
             metadata.put("warnings_count", "0");
             List<Object[]> metadataRows = metadata.entrySet().stream()
@@ -515,6 +533,9 @@ public final class BackupExportService {
                     data.places());
             writeSheet(workbook, styles, textStore, "capture_methods", CAPTURE_METHOD_HEADERS,
                     data.captureMethods());
+            writeSheet(workbook, styles, textStore, "environment_options",
+                    new String[]{"stable_key", "category", "name", "active", "sort_order"},
+                    data.environmentOptions());
             writeSheet(workbook, styles, textStore, "events", EVENT_HEADERS,
                     data.events());
             writeSheet(workbook, styles, textStore, "photos", PHOTO_HEADERS,
@@ -819,7 +840,8 @@ public final class BackupExportService {
             List<Object[]> places,
             List<Object[]> events,
             List<PhotoExport> photos,
-            List<Object[]> captureMethods
+            List<Object[]> captureMethods,
+            List<Object[]> environmentOptions
     ) {
     }
 

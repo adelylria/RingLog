@@ -35,6 +35,154 @@ public final class RecordReportServiceTest {
     private RecordReportServiceTest() {
     }
 
+    public static void qualitativeThermalSensationDoesNotAcquireDegrees() throws Exception {
+        Path directory = Files.createTempDirectory("ringlog-report-qualitative-weather-");
+        try {
+            List<String> sensations = List.of("Templado", "Mucho frío", "Templat", "23.8",
+                    "-3,5", "-3,5 °C", "23.8°C");
+            List<String> pdfValues = List.of("Templado", "Mucho frío", "Templat", "23.8 °C",
+                    "-3,5 °C", "-3,5 °C", "23.8°C");
+            List<BirdEventReportRow> rows = sensations.stream()
+                    .map(value -> withThermalSensation(value, 22)).toList();
+            RecordReportService service = new RecordReportService(FIXED_CLOCK);
+            Path excel = service.export(RecordReportFormat.EXCEL, directory.resolve("weather"),
+                    rows, List.of()).path();
+            try (Workbook workbook = WorkbookFactory.create(excel.toFile())) {
+                Sheet records = workbook.getSheet("Registros");
+                Map<String, Integer> columns = headerColumns(records.getRow(3));
+                require(columns.containsKey("Sensación térmica")
+                                && !columns.containsKey("Sensación térmica (°C)"),
+                        "Thermal sensation header must support qualitative and historical numeric values");
+                for (int index = 0; index < sensations.size(); index++) {
+                    Row row = records.getRow(4 + index);
+                    Cell sensation = row.getCell(columns.get("Sensación térmica"));
+                    if (index == 3) {
+                        require(sensation.getCellType() == CellType.NUMERIC
+                                        && sensation.getNumericCellValue() == 23.8,
+                                "Bare historical numeric sensation must remain numeric in Excel");
+                    } else {
+                        require(sensation.getCellType() == CellType.STRING
+                                        && sensations.get(index).equals(sensation.getStringCellValue()),
+                                "Qualitative and already formatted historical sensation must remain literal");
+                    }
+                    require(row.getCell(columns.get("Temperatura (°C)")).getNumericCellValue() == 22,
+                            "Ambient temperature must retain its own numeric column and unit");
+                }
+            }
+            Path pdf = service.export(RecordReportFormat.PDF, directory.resolve("weather"),
+                    rows, List.of()).path();
+            try (PDDocument document = Loader.loadPDF(pdf.toFile())) {
+                for (int index = 0; index < sensations.size(); index++) {
+                    String text = pageText(document, index + 2);
+                    require(text.contains("Sensación térmica") && text.contains(pdfValues.get(index))
+                                    && text.contains("Temperatura") && text.contains("22 °C"),
+                            "PDF must distinguish the sensation from the numeric ambient temperature");
+                    require(!text.contains("°C °C") && !text.contains("°C°C"),
+                            "Historical values with units must never acquire a duplicate unit");
+                    if (index < 3) {
+                        require(!text.contains(sensations.get(index) + " °C")
+                                        && !text.contains(sensations.get(index) + "°C"),
+                                "Qualitative Spanish and old Mallorcan sensation must not acquire degrees");
+                    }
+                }
+            }
+        } finally {
+            deleteTree(directory);
+        }
+    }
+
+    private static BirdEventReportRow withThermalSensation(String sensation, Integer temperature) {
+        BirdEventDetail source = details().get(0);
+        return BirdEventReportRow.fromDetail(new BirdEventDetail(
+                source.id(), source.birdId(), source.ringNumber(), source.species(),
+                source.eventType(), source.eventDate(), source.eventTime(), source.place(),
+                source.locality(), source.locationText(), source.captureType(), source.sexCode(),
+                source.ageEuringCode(), source.fatScore(), source.muscleScore(),
+                source.ringerInitials(), source.status(), source.reproductiveStatus(),
+                source.moultIntensity(), source.moultExtension(), source.birdCondition(),
+                source.returnStatus(), source.wing(), source.p3(), source.torso(), source.weight(),
+                source.clouds(), source.rain(), sensation, source.wind(),
+                source.latitude(), source.longitude(), source.observations(), source.dead(),
+                source.reviewStatus(), source.reviewNote(), source.photoPaths(),
+                source.speciesId(), source.placeId(), source.captureMethodId(), source.captureMethod(),
+                temperature
+        ));
+    }
+
+    public static void temperatureIsOptionalAndSeparateFromThermalSensation() throws Exception {
+        Path directory = Files.createTempDirectory("ringlog-report-temperature-");
+        try {
+            Integer[] temperatures = {-99, 0, 99, null};
+            java.util.ArrayList<BirdEventReportRow> rows = new java.util.ArrayList<>();
+            for (Integer temperature : temperatures) {
+                BirdEventDetail source = details().get(0);
+                rows.add(BirdEventReportRow.fromDetail(new BirdEventDetail(
+                        source.id(), source.birdId(), source.ringNumber(), source.species(),
+                        source.eventType(), source.eventDate(), source.eventTime(), source.place(),
+                        source.locality(), source.locationText(), source.captureType(), source.sexCode(),
+                        source.ageEuringCode(), source.fatScore(), source.muscleScore(),
+                        source.ringerInitials(), source.status(), source.reproductiveStatus(),
+                        source.moultIntensity(), source.moultExtension(), source.birdCondition(),
+                        source.returnStatus(), source.wing(), source.p3(), source.torso(), source.weight(),
+                        source.clouds(), source.rain(), source.thermalSensation(), source.wind(),
+                        source.latitude(), source.longitude(), source.observations(), source.dead(),
+                        source.reviewStatus(), source.reviewNote(), source.photoPaths(),
+                        source.speciesId(), source.placeId(), source.captureMethodId(), source.captureMethod(),
+                        temperature
+                )));
+            }
+            RecordReportService service = new RecordReportService(FIXED_CLOCK);
+            Path excel = service.export(RecordReportFormat.EXCEL, directory.resolve("temperature"), rows, List.of()).path();
+            try (Workbook workbook = WorkbookFactory.create(excel.toFile())) {
+                Sheet records = workbook.getSheet("Registros");
+                Map<String, Integer> columns = headerColumns(records.getRow(3));
+                for (int index = 0; index < temperatures.length; index++) {
+                    Row row = records.getRow(4 + index);
+                    Cell temperature = row.getCell(columns.get("Temperatura (°C)"));
+                    if (temperatures[index] == null) {
+                        require(temperature.getCellType() == CellType.BLANK,
+                                "Missing ambient temperature must export as blank, not zero or thermal sensation");
+                    } else {
+                        require(temperature.getCellType() == CellType.NUMERIC
+                                        && temperature.getNumericCellValue() == temperatures[index],
+                                "Ambient temperature must remain a sortable signed integer in Excel");
+                    }
+                    require(row.getCell(columns.get("Sensación térmica")).getNumericCellValue() == 23.8,
+                            "Thermal sensation must remain independent of ambient temperature");
+                }
+            }
+            Path pdf = service.export(RecordReportFormat.PDF, directory.resolve("temperature"), rows, List.of()).path();
+            try (PDDocument document = Loader.loadPDF(pdf.toFile())) {
+                String text = new PDFTextStripper().getText(document);
+                require(text.contains("Temperatura") && text.contains("-99 °C")
+                                && text.contains("0 °C") && text.contains("99 °C")
+                                && text.contains("Sensación térmica") && text.contains("23.8 °C"),
+                        "PDF must show ambient temperature and thermal sensation as separate values with units");
+                boolean[] locationFound = {false};
+                float cardBottomFromTop = document.getPage(1).getMediaBox().getHeight() - 290;
+                PDFTextStripper positions = new PDFTextStripper() {
+                    @Override
+                    protected void writeString(String value, List<org.apache.pdfbox.text.TextPosition> glyphs)
+                            throws IOException {
+                        if (value.contains("Ubicación libre")) {
+                            locationFound[0] = true;
+                            require(glyphs.stream().allMatch(glyph -> glyph.getYDirAdj()
+                                            + glyph.getHeightDir() < cardBottomFromTop - 4),
+                                    "The last conditions row must remain inside its card, above the notes");
+                        }
+                        super.writeString(value, glyphs);
+                    }
+                };
+                positions.setStartPage(2);
+                positions.setEndPage(2);
+                positions.getText(document);
+                require(locationFound[0], "The first record page must retain the final conditions field");
+            }
+        } finally {
+            deleteTree(directory);
+        }
+    }
+
     public static void captureMethodAppearsInExcelAndPdf() throws Exception {
         Path directory = Files.createTempDirectory("ringlog-report-capture-method-");
         try {
@@ -118,7 +266,7 @@ public final class RecordReportServiceTest {
                                 "Extensión de muda", "Vuelta", "Anillador",
                                 "Clasificación histórica", "Ala (mm)", "P3 (mm)",
                                 "Tarso (mm)", "Peso (g)", "Grasa", "Músculo",
-                                "Nubes", "Lluvia", "Sensación térmica (°C)",
+                                "Nubes", "Lluvia", "Sensación térmica",
                                 "Viento", "Observaciones", "N.º de fotos",
                                 "Archivo de origen", "Referencia de origen"
                         )),
@@ -718,6 +866,8 @@ public final class RecordReportServiceTest {
     }
 
     public static void main(String[] args) throws Exception {
+        qualitativeThermalSensationDoesNotAcquireDegrees();
+        temperatureIsOptionalAndSeparateFromThermalSensation();
         captureMethodAppearsInExcelAndPdf();
         deadConditionHasAReadableLabelInReports();
         excelContainsTheCompleteFilteredDataset();

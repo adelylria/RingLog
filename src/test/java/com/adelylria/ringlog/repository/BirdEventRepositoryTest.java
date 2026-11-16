@@ -639,6 +639,59 @@ public final class BirdEventRepositoryTest {
         }
     }
 
+    public static void ambientTemperatureIsOptionalIndependentAndBounded() throws Exception {
+        Path copy = copySeededDatabase();
+        try {
+            BirdEventRepository repository = new BirdEventRepository(copy.toString());
+            BirdEventInput original = eventInput("TEMPERATURE-01", 1L, EventType.RINGING, 1L, null);
+            require(original.temperatureCelsius() == null,
+                    "Existing input constructors must leave ambient temperature unspecified");
+            long eventId = repository.insert(withTemperature(original, 0));
+            for (Integer temperature : Arrays.asList(0, -99, 99, 22, null)) {
+                repository.update(eventId, withTemperature(original, temperature));
+                BirdEventDetail detail = repository.findDetail(eventId).orElseThrow();
+                require(java.util.Objects.equals(temperature, detail.temperatureCelsius()),
+                        "Detail reads must retain zero, signed limits, and clearing the temperature");
+                require("24".equals(detail.thermalSensation()),
+                        "Ambient temperature must not alter historical thermal sensation");
+                BirdEventDetail report = repository.findReportRows(List.of(eventId)).get(0).detail();
+                require(java.util.Objects.equals(temperature, report.temperatureCelsius())
+                                && "24".equals(report.thermalSensation()),
+                        "The report projection must preserve both independent weather fields");
+            }
+            for (int invalid : new int[]{-100, 100, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+                requireThrowsContaining(() -> repository.insert(withTemperature(original, invalid)),
+                        "temperatura", "Invalid ambient temperatures must fail domain validation");
+                requireThrowsContaining(() -> repository.update(eventId, withTemperature(original, invalid)),
+                        "temperatura", "Invalid edits must fail before changing the event");
+            }
+            require(repository.findDetail(eventId).orElseThrow().temperatureCelsius() == null,
+                    "Rejected edits must preserve the previously cleared temperature");
+            try (Connection connection = Database.getConnection(copy.toString());
+                 Statement statement = connection.createStatement()) {
+                for (String invalid : List.of("-100", "100", "1.5", "'invalid'")) {
+                    requireSqlFailure(() -> statement.executeUpdate(
+                                    "UPDATE bird_event SET temperature_celsius = " + invalid + " WHERE id = " + eventId),
+                            "SQLite must reject non-integers and values outside the temperature range");
+                }
+            }
+        } finally {
+            Files.deleteIfExists(copy);
+        }
+    }
+
+    private static BirdEventInput withTemperature(BirdEventInput input, Integer temperature) {
+        return new BirdEventInput(
+                input.ringNumber(), input.speciesId(), input.eventType(), input.eventDate(), input.eventTime(),
+                input.placeId(), input.locationText(), input.sexCode(), input.ageEuringCode(), input.fatScore(),
+                input.muscleScore(), input.ringerInitials(), input.status(), input.reproductiveStatus(),
+                input.moultIntensity(), input.moultExtension(), input.birdCondition(), input.returnStatus(),
+                input.wing(), input.p3(), input.torso(), input.weight(), input.observations(), input.clouds(),
+                input.rain(), input.thermalSensation(), input.wind(), input.captureType(), input.dead(),
+                input.captureMethodId(), temperature
+        );
+    }
+
     public static void eventEditingUpdatesTheEntryWithoutLosingTraceability()
             throws Exception {
         Path copy = copySeededDatabase();
@@ -1107,6 +1160,7 @@ public final class BirdEventRepositoryTest {
             ringingAndControlReuseOneBirdInsideTransactions();
             eventCreationRejectsInvalidBirdLifecycle();
             eventCreationRejectsInvalidMeasurements();
+            ambientTemperatureIsOptionalIndependentAndBounded();
             eventEditingUpdatesTheEntryWithoutLosingTraceability();
             eventEditingRejectsAnotherBirdRingAndRollsBack();
             failedEventInsertRollsBackNewBird();

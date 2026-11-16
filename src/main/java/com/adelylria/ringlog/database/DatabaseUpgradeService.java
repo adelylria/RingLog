@@ -34,7 +34,9 @@ public final class DatabaseUpgradeService {
                         new V2ToV3SchemaMigration(),
                         new V3ToV4StorageMigration(),
                         new V4ToV5PlaceRegionMigration(),
-                        new V5ToV6CaptureMethodMigration()
+                        new V5ToV6CaptureMethodMigration(),
+                        new V6ToV7TemperatureMigration(),
+                        new V7ToV8EnvironmentMigration()
                 )),
                 new SchemaBackupService(),
                 new DatabaseIntegrityValidator(),
